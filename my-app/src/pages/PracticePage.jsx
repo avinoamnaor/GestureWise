@@ -1,10 +1,86 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Container, Row, Col, Card, Button, Badge, ProgressBar } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, Badge, ProgressBar, Modal } from 'react-bootstrap';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { FaceLandmarker, PoseLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import { useAuth } from '../context/AuthContext';
+import { 
+    analyzeStandingHeadPose, 
+    analyzeStandingPosture, 
+    analyzeStageMovement, 
+    analyzeHandGestures, 
+    analyzeAudienceScanning, 
+    analyzeDistance 
+} from '../utils/standingAnalysis';
 
-// --- פונקציות עזר וספים ---
+// --- קומפוננטת תצוגה חכמה למצב עמידה ("הבמאי השקט") ---
+const StageOverlay = ({ posture, movement, hands }) => {
+    
+    // 1. קריטי: בדיקת מרחק (חוסם הכל - מסך אדום)
+    if (posture.includes("Step") || posture.includes("Too")) {
+        return (
+            <div className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" 
+                 style={{ backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 20 }}>
+                <div className="text-center">
+                    <div style={{ fontSize: '5rem', marginBottom: '10px' }}>📏</div>
+                    <h1 className="text-white fw-bold display-1" style={{ textShadow: '0 4px 10px rgba(0,0,0,0.5)' }}>
+                        {posture}
+                    </h1>
+                </div>
+            </div>
+        );
+    }
+
+    // מכאן והלאה - מציגים רק אם יש בעיה (Warning Mode)
+    // אם הכל תקין ("Good", "Active", "Dynamic") - המסך נשאר נקי!
+    
+    let message = null;
+    let icon = null;
+    let colorClass = "warning"; // צהוב כברירת מחדל
+
+    // 2. בדיקת ידיים (עדיפות שנייה - קל לתיקון)
+    if (hands.includes("Show") || hands.includes("Uncross") || hands.includes("Low") || hands.includes("Touch")) {
+        message = hands;
+        icon = "👐";
+        colorClass = "warning";
+    }
+    
+    // 3. בדיקת תנועה (עדיפות שלישית)
+    else if (movement.includes("Move") || movement.includes("Stop")) {
+        message = movement;
+        icon = "🏃";
+        colorClass = "info"; // כחול
+    }
+
+    // 4. בדיקת יציבה/ראש (עדיפות רביעית)
+    else if (posture.includes("Straighten") || posture.includes("Look Up")) {
+        message = posture;
+        icon = "👀";
+        colorClass = "warning";
+    }
+
+    // אם אין הודעה - לא מחזירים כלום (מסך נקי)
+    if (!message) return null;
+
+    return (
+        <div className="position-absolute top-50 start-50 translate-middle text-center p-4" 
+             style={{ 
+                 minWidth: '60%',
+                 borderRadius: '20px', 
+                 zIndex: 10,
+                 backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                 backdropFilter: 'blur(4px)',
+                 border: `3px solid ${colorClass === 'warning' ? '#ffc107' : '#0dcaf0'}`
+             }}>
+            <div style={{ fontSize: '3rem', marginBottom: '0' }}>{icon}</div>
+            <h1 className={`fw-bold display-4 m-0 ${colorClass === 'warning' ? 'text-warning' : 'text-info'}`} 
+                style={{ textShadow: '2px 2px 4px #000' }}>
+                {message}
+            </h1>
+        </div>
+    );
+};
+
+// --- Helper Functions ---
 const calculateVariance = (arr) => {
   if (arr.length === 0) return 0;
   const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -22,11 +98,30 @@ function PracticePage() {
   const { user } = useAuth();
   
   const { speechText, speechTitle } = location.state || {};
+  
+  // === State למצב האימון ===
+  const [practiceMode, setPracticeMode] = useState(null); // 'sitting' | 'standing' | null
+  const [showModeSelector, setShowModeSelector] = useState(true); 
+
   const [showTeleprompter, setShowTeleprompter] = useState(!!speechText);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   
+  // --- Refs למצב עמידה (טיימרים וזיכרון) ---
+  const movementHistoryRef = useRef([]); 
+  const crossedArmsTimerRef = useRef(null); 
+  const faceTouchTimerRef = useRef(null); 
+  const figLeafTimerRef = useRef(null); 
+  const handsLowTimerRef = useRef(null);   
+  const noGesturesTimerRef = useRef(null); 
+  const staticTimerRef = useRef(null);
+  const scanningTimerRef = useRef(null);
+  const headDownTimerRef = useRef(null); 
+  const leaningTimerRef = useRef(null);  
+  const bodyTurnTimerRef = useRef(null);
+  const dynamicFeedbackTimerRef = useRef(null); // אל תשכח להגדיר את זה למעלה
+
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
 
@@ -38,7 +133,7 @@ function PracticePage() {
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false); 
   
-  // Analysis States
+  // === Analysis States (ישיבה) ===
   const [centeringStatus, setCenteringStatus] = useState("Checking..."); 
   const [expressionStatus, setExpressionStatus] = useState("Neutral 😐"); 
   const [browStatus, setBrowStatus] = useState("Neutral 😐"); 
@@ -58,6 +153,11 @@ function PracticePage() {
   const [volumeLevel, setVolumeLevel] = useState(0); 
   const [audioStatus, setAudioStatus] = useState("Listening...");
 
+  // === States למצב עמידה (Standing Mode) ===
+  const [stageMovementStatus, setStageMovementStatus] = useState("Stand Still"); 
+  const [postureStatus, setPostureStatus] = useState("Checking..."); 
+  const [handsActivityStatus, setHandsActivityStatus] = useState("Inactive"); 
+
   const faceLandmarkerRef = useRef(null);
   const poseLandmarkerRef = useRef(null);
   const requestRef = useRef(null);
@@ -74,7 +174,10 @@ function PracticePage() {
     handsAwayFromFaceFrames: 0,
     goodVolumeFrames: 0,
     goodPostureFrames: 0,
-    goodArticulationFrames: 0
+    goodArticulationFrames: 0,
+    // שדות למצב עמידה
+    standingGoodPostureFrames: 0,
+    stageMovementScore: 0
   });
 
   // 1. טעינת מודלים
@@ -138,13 +241,13 @@ function PracticePage() {
     };
   }, []);
 
-  // 2. התנעת לולאה בטוחה
+  // 2. התנעת לולאה
   useEffect(() => {
-    if (isModelsLoaded) {
-        console.log("🤖 AI Models Loaded - Starting Analysis Loop");
+    if (isModelsLoaded && practiceMode) {
+        console.log(`🤖 AI Models Loaded - Starting Analysis Loop in ${practiceMode} mode`);
         predictWebcam();
     }
-  }, [isModelsLoaded]);
+  }, [isModelsLoaded, practiceMode]);
 
   const startRecording = (stream) => {
     try {
@@ -168,7 +271,7 @@ function PracticePage() {
     }
   };
 
-  // --- פונקציות ניתוח ---
+  // --- פונקציות ניתוח לישיבה (מקורי) ---
   const analyzeLighting = (ctx, width, height) => {
     try {
         const frameData = ctx.getImageData(width / 3, height / 3, width / 3, height / 3).data;
@@ -418,7 +521,6 @@ function PracticePage() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
-    // בדיקה כפולה וחשובה
     if (
         video && canvas && 
         faceLandmarkerRef.current && poseLandmarkerRef.current &&
@@ -436,94 +538,171 @@ function PracticePage() {
         
         let isTouchingFace = false;
 
-        // --- התיקון הגדול כאן: בדיקת אורך המערכים ---
         const faceLms = (faceResult.faceLandmarks && faceResult.faceLandmarks.length > 0) ? faceResult.faceLandmarks[0] : null;
         const poseLms = (poseResult.landmarks && poseResult.landmarks.length > 0) ? poseResult.landmarks[0] : null;
 
-        if (Date.now() - lastProcessTimeRef.current > 100) {
-          
-          const lightRes = analyzeLighting(ctx, canvas.width, canvas.height);
-          setLightingStatus(lightRes.status);
-
-          const audioRes = analyzeAudio(); 
-          setAudioStatus(audioRes.status);
-          
-          let eyeRes = { status: "No Face", isGood: false };
-          let posRes = { centerStatus: "No Face", isCentered: false, distStatus: "Waiting..." };
-          let exprRes = { smile: { status: "Neutral 😐", isSmiling: false }, brow: "Neutral 😐", squint: "..." };
-          let bodyRes = { status: "No Body", isGood: false };
-          let tiltRes = "Straight 😐"; 
-          let articRes = { status: "Silent", isGood: true }; 
-          let engageRes = "Balanced";
-          let camHeight = "Checking...";
-          let shoulderRes = { status: "Checking...", isLevel: false };
-          let chinRes = "Checking...";
-
-          if (faceLms) {
-             posRes = analyzeCenteringAndDistance(faceLms, poseLms);
-             setCenteringStatus(posRes.centerStatus);
-             setDistanceStatus(posRes.distStatus);
-             
-             tiltRes = analyzeHeadTilt(faceLms);
-             setHeadTiltStatus(tiltRes);
-
-             articRes = analyzeArticulation(faceLms, audioRes.vol);
-             setArticulationStatus(articRes.status);
-
-             camHeight = analyzeCameraHeight(faceLms);
-             setCameraHeightStatus(camHeight);
-
-             chinRes = analyzeChinPitch(faceLms);
-             setChinStatus(chinRes);
-          }
-
-          if (faceResult.faceBlendshapes && faceResult.faceBlendshapes.length > 0) {
-            const blends = faceResult.faceBlendshapes[0].categories;
-            eyeRes = analyzeEyeContact(blends);
-            setEyeContactStatus(eyeRes.status);
+        // ============================================
+        // לוגיקה למצב ישיבה (SITTING / WEBCAM)
+        // ============================================
+        if (practiceMode === 'sitting') {
+            if (Date.now() - lastProcessTimeRef.current > 100) {
             
-            exprRes = analyzeExpression(blends);
-            setExpressionStatus(exprRes.smile.status);
-            setBrowStatus(exprRes.brow);
-            setSquintStatus(exprRes.squint);
-          }
+                const lightRes = analyzeLighting(ctx, canvas.width, canvas.height);
+                setLightingStatus(lightRes.status);
 
-          if (poseLms) {
-             if(faceLms) {
-                bodyRes = analyzeBodyAndHands(poseLms, faceLms);
-                setBodyStatus(bodyRes.status);
-                if (!bodyRes.isGood) isTouchingFace = true;
-             } else {
-                const handsVis = poseLms[15].visibility > 0.5 || poseLms[16].visibility > 0.5;
-                setBodyStatus(handsVis ? "Hands Open 👐" : "Hands Hidden 🙈");
-             }
-             engageRes = analyzeEngagement(poseLms);
-             setEngagementStatus(engageRes);
-             shoulderRes = analyzeShoulderStability(poseLms);
-             setShoulderStatus(shoulderRes.status);
-          }
+                const audioRes = analyzeAudio(); 
+                setAudioStatus(audioRes.status);
+                
+                let eyeRes = { status: "No Face", isGood: false };
+                let posRes = { centerStatus: "No Face", isCentered: false, distStatus: "Waiting..." };
+                let exprRes = { smile: { status: "Neutral 😐", isSmiling: false }, brow: "Neutral 😐", squint: "..." };
+                let bodyRes = { status: "No Body", isGood: false };
+                let tiltRes = "Straight 😐"; 
+                let articRes = { status: "Silent", isGood: true }; 
+                let engageRes = "Balanced";
+                let camHeight = "Checking...";
+                let shoulderRes = { status: "Checking...", isLevel: false };
+                let chinRes = "Checking...";
 
-          if (eyeRes.status !== "No Face") {
-            statsRef.current.totalFrames += 1;
-            if (eyeRes.isGood) statsRef.current.goodEyeContactFrames += 1;
-            if (posRes.isCentered) statsRef.current.centeredFrames += 1;
-            if (exprRes.smile.isSmiling) statsRef.current.smilingFrames += 1;
-            if (bodyRes.isGood) statsRef.current.handsAwayFromFaceFrames += 1;
-            if (audioRes.isGood) statsRef.current.goodVolumeFrames += 1;
-            if (articRes.isGood) statsRef.current.goodArticulationFrames += 1;
-            if (shoulderRes.isLevel) statsRef.current.goodPostureFrames += 1;
-          }
-          lastProcessTimeRef.current = Date.now();
-        } else {
-            if (bodyStatus.includes("Don't touch")) isTouchingFace = true;
+                if (faceLms) {
+                    posRes = analyzeCenteringAndDistance(faceLms, poseLms);
+                    setCenteringStatus(posRes.centerStatus);
+                    setDistanceStatus(posRes.distStatus);
+                    
+                    tiltRes = analyzeHeadTilt(faceLms);
+                    setHeadTiltStatus(tiltRes);
+
+                    articRes = analyzeArticulation(faceLms, audioRes.vol);
+                    setArticulationStatus(articRes.status);
+
+                    camHeight = analyzeCameraHeight(faceLms);
+                    setCameraHeightStatus(camHeight);
+
+                    chinRes = analyzeChinPitch(faceLms);
+                    setChinStatus(chinRes);
+                }
+
+                if (faceResult.faceBlendshapes && faceResult.faceBlendshapes.length > 0) {
+                    const blends = faceResult.faceBlendshapes[0].categories;
+                    eyeRes = analyzeEyeContact(blends);
+                    setEyeContactStatus(eyeRes.status);
+                    
+                    exprRes = analyzeExpression(blends);
+                    setExpressionStatus(exprRes.smile.status);
+                    setBrowStatus(exprRes.brow);
+                    setSquintStatus(exprRes.squint);
+                }
+
+                if (poseLms) {
+                    if(faceLms) {
+                        bodyRes = analyzeBodyAndHands(poseLms, faceLms);
+                        setBodyStatus(bodyRes.status);
+                        if (!bodyRes.isGood) isTouchingFace = true;
+                    } else {
+                        const handsVis = poseLms[15].visibility > 0.5 || poseLms[16].visibility > 0.5;
+                        setBodyStatus(handsVis ? "Hands Open 👐" : "Hands Hidden 🙈");
+                    }
+                    engageRes = analyzeEngagement(poseLms);
+                    setEngagementStatus(engageRes);
+                    shoulderRes = analyzeShoulderStability(poseLms);
+                    setShoulderStatus(shoulderRes.status);
+                }
+
+                if (eyeRes.status !== "No Face") {
+                    statsRef.current.totalFrames += 1;
+                    if (eyeRes.isGood) statsRef.current.goodEyeContactFrames += 1;
+                    if (posRes.isCentered) statsRef.current.centeredFrames += 1;
+                    if (exprRes.smile.isSmiling) statsRef.current.smilingFrames += 1;
+                    if (bodyRes.isGood) statsRef.current.handsAwayFromFaceFrames += 1;
+                    if (audioRes.isGood) statsRef.current.goodVolumeFrames += 1;
+                    if (articRes.isGood) statsRef.current.goodArticulationFrames += 1;
+                    if (shoulderRes.isLevel) statsRef.current.goodPostureFrames += 1;
+                }
+                lastProcessTimeRef.current = Date.now();
+            } else {
+                if (bodyStatus.includes("Don't touch")) isTouchingFace = true;
+            }
+
+            if (faceLms) drawFaceBox(ctx, faceLms, isTouchingFace);
+            if (poseLms) drawHands(ctx, poseLms, isTouchingFace);
+        }
+        
+        // ============================================
+        // לוגיקה למצב עמידה (STANDING / STAGE)
+        // ============================================
+        else if (practiceMode === 'standing') {
+            if (Date.now() - lastProcessTimeRef.current > 100) {
+                 
+                if (poseLms) {
+                    // --- שלב 1: חישובים (Calculations) ---
+                    // קודם כל מבצעים את כל הניתוחים כדי שהמשתנים יהיו קיימים!
+                    const distRes = analyzeDistance(poseLms, faceLms);
+                    const postureRes = analyzeStandingPosture(poseLms, leaningTimerRef, bodyTurnTimerRef);
+                    const headRes = analyzeStandingHeadPose(poseLms, headDownTimerRef);
+                    const scanRes = analyzeAudienceScanning(poseLms, scanningTimerRef);
+                    const moveRes = analyzeStageMovement(poseLms, movementHistoryRef.current, staticTimerRef, dynamicFeedbackTimerRef);
+                    const handsRes = analyzeHandGestures(
+                         poseLms, 
+                         crossedArmsTimerRef, 
+                         faceTouchTimerRef,
+                         figLeafTimerRef,
+                         handsLowTimerRef,
+                         noGesturesTimerRef
+                     );
+
+                    // --- שלב 2: קבלת החלטות (Decisions) ---
+                    let finalHeadStatus = "Good Posture ✅"; 
+                    
+                    if (!distRes.isGood) {
+                         // 🚨 הכי חשוב: מרחק (קריטי)
+                         finalHeadStatus = distRes.status;
+                    }
+                    else if (!postureRes.isGood) {
+                         // 1. גוף עקום
+                         finalHeadStatus = postureRes.status;
+                    } 
+                    else if (!headRes.isGood) {
+                         // 2. ראש למטה
+                         finalHeadStatus = headRes.status;
+                    } 
+                    else if (!scanRes.isGood) {
+                         // 3. סריקת קהל
+                         finalHeadStatus = scanRes.status;
+                    } 
+                    else if (scanRes.status.includes("Great")) {
+                         finalHeadStatus = scanRes.status;
+                    }
+                    else if (headRes.status.includes("Glancing")) {
+                         finalHeadStatus = headRes.status;
+                    }
+
+                    // --- שלב 3: עדכון State ---
+                    setPostureStatus(finalHeadStatus);
+                    setStageMovementStatus(moveRes.status);
+                    setHandsActivityStatus(handsRes.status);
+
+                    // --- שלב 4: ניקוד ---
+                    if (distRes.isGood && headRes.isGood && postureRes.isGood && moveRes.isGood && handsRes.isGood) {
+                         statsRef.current.standingGoodPostureFrames += 1;
+                         statsRef.current.stageMovementScore += 1;
+                         statsRef.current.handsVisibleFrames += 1; 
+                    }
+                } else {
+                     setPostureStatus("Body not detected ❌");
+                }
+                 
+                lastProcessTimeRef.current = Date.now();
+            }
+            
+            if (poseLms) drawHands(ctx, poseLms, false);
         }
 
-        // שימוש במשתנים הבטוחים שלנו לציור
-        if (faceLms) drawFaceBox(ctx, faceLms, isTouchingFace);
-        if (poseLms) drawHands(ctx, poseLms, isTouchingFace);
       }
     }
-    requestRef.current = requestAnimationFrame(predictWebcam);
+    
+    if (practiceMode) {
+        requestRef.current = requestAnimationFrame(predictWebcam);
+    }
   };
 
   const handleStopSession = async () => {
@@ -576,11 +755,75 @@ function PracticePage() {
     setIsSaving(false);
   };
 
+  const handleModeSelect = (mode) => {
+      setPracticeMode(mode);
+      setShowModeSelector(false);
+  };
+
   return (
     <div style={{ height: 'calc(100vh - 80px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      
+      {/* === מודל בחירת מצב === */}
+      <Modal 
+        show={showModeSelector} 
+        centered 
+        backdrop="static" 
+        keyboard={false}
+        size="lg"
+      >
+        <Modal.Header>
+          <Modal.Title className="fw-bold">Choose Your Practice Mode</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="p-5 text-center">
+            <h5 className="mb-4">How are you presenting today?</h5>
+            <Row className="g-4">
+                <Col md={6}>
+                    <Card 
+                        className="h-100 shadow-sm hover-effect border-2" 
+                        role="button"
+                        onClick={() => handleModeSelect('sitting')}
+                        style={{ cursor: 'pointer', transition: '0.2s', borderColor: '#0d6efd' }}
+                    >
+                        <Card.Body className="py-5">
+                            <div style={{ fontSize: '4rem', marginBottom: '15px' }}>💻</div>
+                            <h4>Online / Webcam</h4>
+                            <p className="text-muted small">
+                                Focus on: Eye contact, facial expressions, and clarity.
+                                <br/>Best for: Zoom calls, Interviews.
+                            </p>
+                            <Button variant="outline-primary" className="mt-3">Select Sitting</Button>
+                        </Card.Body>
+                    </Card>
+                </Col>
+                <Col md={6}>
+                    <Card 
+                        className="h-100 shadow-sm hover-effect border-2" 
+                        role="button"
+                        onClick={() => handleModeSelect('standing')}
+                        style={{ cursor: 'pointer', transition: '0.2s', borderColor: '#198754' }}
+                    >
+                        <Card.Body className="py-5">
+                            <div style={{ fontSize: '4rem', marginBottom: '15px' }}>🎤</div>
+                            <h4>Stage / Standing</h4>
+                            <p className="text-muted small">
+                                Focus on: Body language, stage movement, and hand gestures.
+                                <br/>Best for: Keynotes, Class presentations.
+                            </p>
+                            <Button variant="outline-success" className="mt-3">Select Standing</Button>
+                        </Card.Body>
+                    </Card>
+                </Col>
+            </Row>
+        </Modal.Body>
+      </Modal>
+
       <div className="bg-white border-bottom px-4 py-2 d-flex justify-content-between align-items-center" style={{ flexShrink: 0 }}>
         <div>
-            <h5 className="m-0 font-weight-bold">Live Practice</h5>
+            <h5 className="m-0 font-weight-bold">
+                Live Practice 
+                {practiceMode === 'standing' && <Badge bg="success" className="ms-2">Stage Mode</Badge>}
+                {practiceMode === 'sitting' && <Badge bg="primary" className="ms-2">Webcam Mode</Badge>}
+            </h5>
             <small className={isModelsLoaded ? "text-success" : "text-warning"}>
                 {isModelsLoaded ? "AI Active & Ready" : "Loading Models..."}
             </small>
@@ -617,11 +860,25 @@ function PracticePage() {
               <Card className="h-100 shadow-sm border-0 position-relative" style={{ borderRadius: '20px', overflow: 'hidden', backgroundColor: '#2c3e50', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div className="position-absolute top-0 start-0 m-3 z-index-10"><Badge bg="danger">LIVE REC</Badge></div>
                 
-                {lightingStatus.includes("Dark") && <Badge bg="warning" className="position-absolute top-0 start-50 translate-middle-x m-3 text-dark">⚠️ תאורה חלשה</Badge>}
-                {distanceStatus.includes("Too") && <Badge bg="info" className="position-absolute bottom-0 start-50 translate-middle-x m-5">{distanceStatus}</Badge>}
-                {bodyStatus.includes("Don't touch") && <Badge bg="danger" className="position-absolute top-50 start-50 translate-middle p-3 fs-5 opacity-75">❌ הרחק ידיים מהפנים</Badge>}
-                {articulationStatus.includes("Open") && <Badge bg="warning" className="position-absolute bottom-50 start-50 translate-middle p-2 text-dark">🗣️ דבר ברור יותר (פתח פה)</Badge>}
-                {cameraHeightStatus.includes("Move") && <Badge bg="info" className="position-absolute bottom-0 start-50 translate-middle-x mb-2 fs-6 opacity-90">{cameraHeightStatus}</Badge>}
+                {/* === תצוגת חיוויים למצב ישיבה === */}
+                {practiceMode === 'sitting' && (
+                    <>
+                        {lightingStatus.includes("Dark") && <Badge bg="warning" className="position-absolute top-0 start-50 translate-middle-x m-3 text-dark">⚠️ תאורה חלשה</Badge>}
+                        {distanceStatus.includes("Too") && <Badge bg="info" className="position-absolute bottom-0 start-50 translate-middle-x m-5">{distanceStatus}</Badge>}
+                        {bodyStatus.includes("Don't touch") && <Badge bg="danger" className="position-absolute top-50 start-50 translate-middle p-3 fs-5 opacity-75">❌ הרחק ידיים מהפנים</Badge>}
+                        {articulationStatus.includes("Open") && <Badge bg="warning" className="position-absolute bottom-50 start-50 translate-middle p-2 text-dark">🗣️ דבר ברור יותר (פתח פה)</Badge>}
+                        {cameraHeightStatus.includes("Move") && <Badge bg="info" className="position-absolute bottom-0 start-50 translate-middle-x mb-2 fs-6 opacity-90">{cameraHeightStatus}</Badge>}
+                    </>
+                )}
+                
+                {/* === תצוגת חיוויים למצב עמידה (חדש!) === */}
+                {practiceMode === 'standing' && (
+                    <StageOverlay 
+                        posture={postureStatus} 
+                        movement={stageMovementStatus} 
+                        hands={handsActivityStatus} 
+                    />
+                )}
 
                 {error && <div className="text-white p-3">{error}</div>}
                 
@@ -667,6 +924,9 @@ function PracticePage() {
                 <Card.Header className="bg-transparent border-0 pt-4 px-4">
                     <h6 className="font-weight-bold m-0" style={{ color: '#333' }}>Analysis Metrics</h6>
                 </Card.Header>
+                
+                {/* === תצוגת מדדים למצב ישיבה === */}
+                {practiceMode === 'sitting' && (
                 <Card.Body className="d-flex flex-column px-4 gap-2">
                   
                   <div className="p-2 mb-2" style={{ borderLeft: '3px solid #6c757d', backgroundColor: '#f8f9fa' }}>
@@ -718,8 +978,31 @@ function PracticePage() {
                     <div style={{ fontWeight: '700', fontSize: '0.8rem', color: '#555' }}>{audioStatus}</div>
                     <div style={{ fontSize: '0.8rem', marginTop: '5px', color: articulationStatus.includes("Open") ? 'red' : 'green' }}>{articulationStatus}</div>
                   </div>
-                  
                 </Card.Body>
+                )}
+
+                {/* === תצוגת מדדים למצב עמידה (החדש!) === */}
+                {practiceMode === 'standing' && (
+                    <Card.Body className="d-flex flex-column px-4 gap-2">
+                         <h6 className="text-muted mb-3">STAGE ANALYSIS</h6>
+                         
+                         <div className={`p-3 rounded mb-2 text-center border ${postureStatus.includes("Step") ? 'bg-danger text-white' : 'bg-light'}`}>
+                             <strong className="d-block mb-1">📍 Posture & Position</strong>
+                             <div className="fs-5 fw-bold">{postureStatus}</div>
+                         </div>
+
+                         <div className="p-3 bg-light rounded mb-2 text-center border">
+                             <strong className="d-block mb-1">🏃 Movement</strong>
+                             <div className="text-primary fw-bold">{stageMovementStatus}</div>
+                         </div>
+                         
+                         <div className="p-3 bg-light rounded mb-2 text-center border">
+                             <strong className="d-block mb-1">👐 Hands</strong>
+                             <div className="text-info fw-bold">{handsActivityStatus}</div>
+                         </div>
+                    </Card.Body>
+                )}
+
               </Card>
             </Col>
           </Row>
