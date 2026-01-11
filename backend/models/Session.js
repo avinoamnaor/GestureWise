@@ -7,7 +7,15 @@ const sessionSchema = new mongoose.Schema({
   duration: { type: String },
   overallScore: { type: Number },
   
-  // --- המטריקות ---
+  // הוספנו את הוידאו (זה כבר היה לך)
+  videoUrl: { type: String },
+
+  // === הנה החלק שחסר לך! (הוסף את זה) ===
+  transcript: { type: String },  // איפה שנשמור את הטקסט
+  wpm: { type: Number },         // מילים לדקה
+  fillerCount: { type: Number }, // ספירת "אממ"
+  // ======================================
+
   metrics: {
     eyeContact: Number,
     expression: Number,
@@ -16,10 +24,7 @@ const sessionSchema = new mongoose.Schema({
     volume: Number,
     articulation: Number,
     posture: Number
-  },
-
-  // --- הנה החלק החסר! ---
-  videoUrl: { type: String } 
+  }
 });
 
 module.exports = mongoose.model('Session', sessionSchema);

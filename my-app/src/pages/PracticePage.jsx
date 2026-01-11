@@ -104,6 +104,7 @@ function PracticePage() {
   const [showModeSelector, setShowModeSelector] = useState(true); 
 
   const [showTeleprompter, setShowTeleprompter] = useState(!!speechText);
+  const [language, setLanguage] = useState('en'); // ברירת מחדל אנגלית ('he' לעברית)
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -749,7 +750,8 @@ function PracticePage() {
     navigate('/summary', { 
         state: { 
             realData: sessionData, 
-            videoBlob: videoBlob 
+            videoBlob: videoBlob
+             
         } 
     });
     setIsSaving(false);
