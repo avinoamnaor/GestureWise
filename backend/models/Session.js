@@ -2,19 +2,24 @@ const mongoose = require('mongoose');
 
 const sessionSchema = new mongoose.Schema({
   userId: { type: String, required: true },
-  speechType: { type: String, default: "Free Practice" },
+  
+  // זיהוי הנאום (חשוב ל"היכל התהילה")
+  speechTitle: { type: String, default: "Free Practice" }, 
+  practiceMode: { type: String, enum: ['sitting', 'standing'], default: 'sitting' },
+  
+  // פרטיות (ברירת מחדל: פרטי)
+  isPublic: { type: Boolean, default: false },
+
   date: { type: Date, default: Date.now },
   duration: { type: String },
   overallScore: { type: Number },
-  
-  // הוספנו את הוידאו (זה כבר היה לך)
   videoUrl: { type: String },
 
-  // === הנה החלק שחסר לך! (הוסף את זה) ===
-  transcript: { type: String },  // איפה שנשמור את הטקסט
-  wpm: { type: Number },         // מילים לדקה
-  fillerCount: { type: Number }, // ספירת "אממ"
-  // ======================================
+  // נתונים טקסטואליים
+  transcript: { type: String },
+  wpm: { type: Number },
+  fillerCount: { type: Number },
+  repetitiveWords: { type: Array }, // הוספנו כדי שזה יישמר בבסיס הנתונים
 
   metrics: {
     eyeContact: Number,

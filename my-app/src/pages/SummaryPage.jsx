@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Container, Row, Col, Card, Button, ProgressBar, Badge, Spinner } from 'react-bootstrap';
+import { Container, Row, Col, Card, Button, ProgressBar, Badge, Spinner, Form, Modal } from 'react-bootstrap';
 import { useAuth } from '../context/AuthContext';
 
 function SummaryPage() {
@@ -10,14 +10,17 @@ function SummaryPage() {
   
   const { realData, videoBlob } = location.state || {};
   const [localVideoUrl, setLocalVideoUrl] = useState(null);
-  
   const [uploadStatus, setUploadStatus] = useState("idle"); 
   const hasStartedProcessing = useRef(false);
 
-  // סטייט לנתוני התמלול
+  // נתונים חדשים
+  const [sessionId, setSessionId] = useState(null); // המזהה של האימון הנוכחי
+  const [isPublic, setIsPublic] = useState(false);  // האם המשתמש שיתף
+  const [topSessions, setTopSessions] = useState([]); // רשימת המצטיינים
+  const [viewingVideo, setViewingVideo] = useState(null); // איזה וידאו רואים עכשיו (מהמצטיינים)
+
   const [transcriptionData, setTranscriptionData] = useState(null);
 
-  // === פונקציית עזר: תרגום קצב דיבור למילים ===
   const getWpmFeedback = (wpm) => {
       if (!wpm) return { text: "Analyzing...", color: "secondary" };
       const speed = parseFloat(wpm);
@@ -26,38 +29,22 @@ function SummaryPage() {
       return { text: "Perfect Pace 🎯", color: "success" };
   };
 
-  // === 1. שער כניסה: אם אין משתמש, חוסמים הכל ===
   if (!user) {
       return (
         <div className="d-flex flex-column align-items-center justify-content-center" style={{ height: '100vh', backgroundColor: '#f8f9fa', textAlign: 'center' }}>
             <div className="bg-white p-5 shadow-sm" style={{ borderRadius: '20px', maxWidth: '500px' }}>
-                <div style={{ fontSize: '4rem', marginBottom: '20px' }}>🔒</div>
                 <h2 style={{ fontWeight: '800', color: '#2c3e50' }}>Login Required</h2>
-                <p className="text-muted mb-4">
-                    You've completed a practice session! <br/>
-                    To view your video, analysis metrics, and speech transcript, you need to be logged in.
-                </p>
-                <div className="d-flex flex-column gap-3">
-                    <Button variant="primary" size="lg" className="rounded-pill w-100" onClick={() => navigate('/login')}>
-                        Log In to Account
-                    </Button>
-                    <Button variant="outline-dark" size="lg" className="rounded-pill w-100" onClick={() => navigate('/register')}>
-                        Create Free Account
-                    </Button>
-                    <Button variant="link" className="text-muted text-decoration-none mt-2" onClick={() => navigate('/')}>
-                        Back to Home
-                    </Button>
-                </div>
+                <Button variant="primary" className="mt-3" onClick={() => navigate('/login')}>Log In</Button>
             </div>
         </div>
       );
   }
 
-  // === מכאן והלאה - הקוד רץ רק למשתמשים מחוברים ===
-
   const sessionData = realData || {
     date: new Date(),
     speechType: "Demo Practice",
+    speechTitle: "Free Practice",
+    practiceMode: "sitting",
     duration: "0:00",
     overallScore: 0,
     metrics: { eyeContact: 0, expression: 0, centering: 0, hands: 0, volume: 0, articulation: 0, posture: 0 }
@@ -74,7 +61,7 @@ function SummaryPage() {
 
   const feedbackText = generateAIFeedback(sessionData.metrics);
 
-  // תצוגת וידאו והכנת נתונים
+  // 1. תצוגת וידאו והכנת נתונים
   useEffect(() => {
       if (videoBlob) {
           const url = URL.createObjectURL(videoBlob);
@@ -82,18 +69,37 @@ function SummaryPage() {
       } else if (sessionData.videoUrl) {
           setLocalVideoUrl(sessionData.videoUrl);
           setUploadStatus("success");
+          setSessionId(sessionData._id); // אם הגענו מההיסטוריה
+          setIsPublic(sessionData.isPublic || false);
           
           if (sessionData.transcript) {
               setTranscriptionData({
                   text: sessionData.transcript,
                   wpm: sessionData.wpm || 0,
-                  fillers: sessionData.fillerCount || 0
+                  fillers: sessionData.fillerCount || 0,
+                  repetitive: sessionData.repetitiveWords || []
               });
           }
       }
   }, [videoBlob, sessionData]);
 
-  // לוגיקת העלאה וניתוח (רצה בוודאות רק למשתמשים מחוברים)
+  // 2. שליפת המצטיינים (Hall of Fame)
+  useEffect(() => {
+      const mode = sessionData.practiceMode || 'sitting';
+      const title = sessionData.speechTitle || 'Free Practice';
+      
+      // === השינוי: מוסיפים את ה-ID הנוכחי להחרגה ===
+      // אם יש לנו sessionId (האימון נשמר), נשלח אותו כדי שלא יחזור ברשימה
+      const excludeParam = sessionId ? `&excludeId=${sessionId}` : '';
+
+      fetch(`http://localhost:5000/api/sessions/top-rated?mode=${mode}&speechTitle=${title}${excludeParam}`)
+        .then(res => res.json())
+        .then(data => setTopSessions(data))
+        .catch(err => console.error("Failed to fetch top sessions", err));
+        
+  }, [sessionData, isPublic, sessionId]); // הוספנו את sessionId לתלויות
+
+  // 3. שמירת האימון הנוכחי לשרת
   useEffect(() => {
     const processSession = async () => {
         if (!videoBlob || hasStartedProcessing.current) return;
@@ -105,7 +111,7 @@ function SummaryPage() {
             const formData = new FormData();
             formData.append("file", videoBlob);
 
-            // 1. העלאה לקלאוד
+            // א. העלאה לקלאוד
             const uploadPromise = (async () => {
                 const cloudData = new FormData();
                 cloudData.append("file", videoBlob);
@@ -114,7 +120,7 @@ function SummaryPage() {
                 return res.json();
             })();
 
-            // 2. תמלול בשרת
+            // ב. תמלול בשרת
             const transcribePromise = fetch('http://localhost:5000/api/transcribe', {
                 method: 'POST',
                 body: formData
@@ -125,17 +131,20 @@ function SummaryPage() {
             setTranscriptionData({
                 text: transcribeResult.transcript || "No speech detected.",
                 wpm: transcribeResult.wpm || 0,
-                fillers: transcribeResult.fillerCount || 0
+                fillers: transcribeResult.fillerCount || 0,
+                repetitive: transcribeResult.repetitiveWords || []
             });
 
-            // 3. שמירה לדאטה בייס
+            // ג. שמירה לדאטה בייס
             const finalSessionData = { 
                 ...sessionData, 
                 userId: user.id,
                 videoUrl: cloudResult.secure_url,
                 transcript: transcribeResult.transcript,
                 wpm: transcribeResult.wpm,
-                fillerCount: transcribeResult.fillerCount
+                fillerCount: transcribeResult.fillerCount,
+                repetitiveWords: transcribeResult.repetitiveWords,
+                isPublic: false // מתחיל תמיד כפרטי
             };
             
             const dbRes = await fetch('http://localhost:5000/api/sessions', {
@@ -144,7 +153,11 @@ function SummaryPage() {
                 body: JSON.stringify(finalSessionData),
             });
 
-            if (dbRes.ok) setUploadStatus("success");
+            if (dbRes.ok) {
+                const savedSession = await dbRes.json();
+                setSessionId(savedSession._id); // שומרים את ה-ID כדי שנוכל לעדכן אחר כך
+                setUploadStatus("success");
+            }
 
         } catch (error) {
             console.error("Error processing session:", error);
@@ -155,19 +168,42 @@ function SummaryPage() {
     processSession();
   }, [videoBlob, user, sessionData]);
 
+  // פונקציה לשיתוף ב"היכל התהילה"
+  const togglePublic = async () => {
+      if (!sessionId) return;
+      
+      const newValue = !isPublic;
+      setIsPublic(newValue); // עדכון אופטימי ב-UI
+
+      try {
+          await fetch(`http://localhost:5000/api/sessions/${sessionId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ isPublic: newValue })
+          });
+      } catch (err) {
+          console.error("Failed to update public status", err);
+          setIsPublic(!newValue); // ביטול אם נכשל
+      }
+  };
+
   return (
     <div style={{ backgroundColor: '#f8f9fa', height: '100%', overflowY: 'auto', paddingBottom: '40px' }}>
       
+      {/* --- Header --- */}
       <div className="bg-white border-bottom py-4 mb-4 shadow-sm">
         <Container className="d-flex justify-content-between align-items-center">
             <div>
                 <h2 style={{ fontWeight: '800', color: '#2c3e50', marginBottom: '5px' }}>Session Report</h2>
                 <div className="text-muted d-flex align-items-center gap-2">
-                    {sessionData.speechType} • {new Date(sessionData.date).toLocaleDateString()}
+                    <Badge bg="dark">{sessionData.speechTitle}</Badge>
+                    <Badge bg={sessionData.practiceMode === 'standing' ? 'success' : 'primary'}>
+                        {sessionData.practiceMode === 'standing' ? 'Standing Mode' : 'Webcam Mode'}
+                    </Badge>
+                    • {new Date(sessionData.date).toLocaleDateString()}
                     
-                    {uploadStatus === 'uploading' && <Badge bg="warning" text="dark">⏳ Analyzing & Saving...</Badge>}
+                    {uploadStatus === 'uploading' && <Badge bg="warning" text="dark">⏳ Saving...</Badge>}
                     {uploadStatus === 'success' && <Badge bg="success">✅ Saved</Badge>}
-                    {uploadStatus === 'error' && <Badge bg="danger">⚠️ Error Saving</Badge>}
                 </div>
             </div>
             <div className="text-end">
@@ -181,36 +217,66 @@ function SummaryPage() {
       <Container>
         <Row className="g-4">
             <Col lg={7}>
-                {/* וידאו */}
+                {/* --- הוידאו שלי --- */}
                 <Card className="border-0 shadow-sm mb-4" style={{ borderRadius: '20px', overflow: 'hidden' }}>
                     {localVideoUrl ? (
                         <div style={{ width: '100%', height: '400px', backgroundColor: '#000' }}>
                             <video src={localVideoUrl} controls style={{ width: '100%', height: '100%' }} />
                         </div>
-                    ) : (
-                        <div className="p-5 text-center">No Video</div>
-                    )}
+                    ) : ( <div className="p-5 text-center">No Video</div> )}
                 </Card>
 
-                {/* תמלול וניתוח שפה */}
+                {/* --- Hall of Fame / היכל התהילה --- */}
+                {topSessions.length > 0 && (
+                    <Card className="border-0 shadow-sm mb-4 bg-white" style={{ borderRadius: '20px' }}>
+                        <Card.Header className="bg-transparent border-0 pt-4 px-4">
+                            <div className="d-flex justify-content-between align-items-center">
+                                <h5 style={{ fontWeight: '800', margin: 0 }}>🏆 Hall of Fame: {sessionData.speechTitle}</h5>
+                                <Badge bg="warning" text="dark">Top Performers</Badge>
+                            </div>
+                        </Card.Header>
+                        <Card.Body className="p-4">
+                            <Row className="g-3">
+                                {topSessions.map((session, idx) => (
+                                    <Col key={session._id} md={4}>
+                                        <Card 
+                                            className="h-100 border-0 shadow-sm" 
+                                            style={{ cursor: 'pointer', transition: '0.2s', backgroundColor: '#f8f9fa' }}
+                                            onClick={() => setViewingVideo(session)}
+                                        >
+                                            <div className="position-relative" style={{ height: '100px', backgroundColor: '#000', borderRadius: '10px 10px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                <span style={{ fontSize: '2rem' }}>▶️</span>
+                                                <Badge bg="success" className="position-absolute top-0 end-0 m-2">{session.overallScore}</Badge>
+                                            </div>
+                                            <Card.Body className="p-2 text-center">
+                                                <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{session.userName}</div>
+                                                <small className="text-muted">{new Date(session.date).toLocaleDateString()}</small>
+                                            </Card.Body>
+                                        </Card>
+                                    </Col>
+                                ))}
+                            </Row>
+                        </Card.Body>
+                    </Card>
+                )}
+
+                {/* --- תמלול --- */}
                 <Card className="border-0 shadow-sm" style={{ borderRadius: '20px' }}>
                     <Card.Body className="p-4">
                         <div className="d-flex justify-content-between align-items-center mb-3">
-                            <h5 style={{ fontWeight: '700', margin: 0 }}>🎙️ Speech Transcript</h5>
+                            <h5 style={{ fontWeight: '700', margin: 0 }}>🎙️ Transcript</h5>
                             {transcriptionData && (
                                 <div className="d-flex gap-2">
-                                    {/* שימוש בפונקציה החדשה להצגת טקסט במקום מספר */}
                                     <Badge bg={getWpmFeedback(transcriptionData.wpm).color}>
-                                        {getWpmFeedback(transcriptionData.wpm).text} ({transcriptionData.wpm} WPM)
+                                        {transcriptionData.wpm} WPM
                                     </Badge>
-                                    
                                     <Badge bg={transcriptionData.fillers > 3 ? "danger" : "success"}>
-                                        🤔 {transcriptionData.fillers} Fillers
+                                        {transcriptionData.fillers} Fillers
                                     </Badge>
                                 </div>
                             )}
                         </div>
-                        <div className="p-3 bg-light rounded" style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '0.95rem', lineHeight: '1.6' }}>
+                        <div className="p-3 bg-light rounded mb-3" style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '0.95rem', lineHeight: '1.6' }}>
                             {transcriptionData ? transcriptionData.text : <div className="text-muted"><Spinner size="sm"/> Analyzing...</div>}
                         </div>
                     </Card.Body>
@@ -218,11 +284,28 @@ function SummaryPage() {
             </Col>
 
             <Col lg={5}>
-                {/* מדדים */}
-                <Card className="border-0 shadow-sm mb-3" style={{ borderRadius: '20px' }}>
+                {/* --- כרטיסיית שיתוף ו-AI Feedback --- */}
+                <Card className="border-0 shadow-sm mb-3" style={{ borderRadius: '20px', background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)' }}>
                     <Card.Body className="p-4">
-                        <h5 style={{ fontWeight: '700', marginBottom: '20px' }}>AI Feedback</h5>
-                        <p className="text-muted">{feedbackText}</p>
+                        <h5 style={{ fontWeight: '700', marginBottom: '15px' }}>AI Feedback</h5>
+                        <p className="text-muted mb-4">{feedbackText}</p>
+                        
+                        {/* שינינו את התנאי ל > 0 כדי שתוכל לראות את הכפתור תמיד */}
+                        {sessionData.overallScore > 0 && sessionId && (
+                            <div className="bg-white p-3 rounded shadow-sm border d-flex align-items-center justify-content-between">
+                                <div>
+                                    <div style={{ fontWeight: 'bold', color: '#2c3e50' }}>Share to Hall of Fame?</div>
+                                    <small className="text-muted">Inspire others with your result</small>
+                                </div>
+                                <Form.Check 
+                                    type="switch"
+                                    id="public-switch"
+                                    style={{ fontSize: '1.5rem' }}
+                                    checked={isPublic}
+                                    onChange={togglePublic}
+                                />
+                            </div>
+                        )}
                     </Card.Body>
                 </Card>
 
@@ -243,6 +326,24 @@ function SummaryPage() {
             </Col>
         </Row>
       </Container>
+
+      {/* --- Modal לצפייה בוידאו של אחרים --- */}
+      <Modal show={!!viewingVideo} onHide={() => setViewingVideo(null)} size="lg" centered>
+          <Modal.Header closeButton>
+              <Modal.Title>{viewingVideo?.userName}'s Session</Modal.Title>
+          </Modal.Header>
+          <Modal.Body className="p-0 bg-black">
+              {viewingVideo && (
+                  <video src={viewingVideo.videoUrl} controls autoPlay style={{ width: '100%', maxHeight: '500px' }} />
+              )}
+          </Modal.Body>
+          <Modal.Footer>
+              <div className="d-flex gap-3 w-100 justify-content-center">
+                  <Badge bg="success" style={{ fontSize: '1rem' }}>Score: {viewingVideo?.overallScore}</Badge>
+              </div>
+          </Modal.Footer>
+      </Modal>
+
     </div>
   );
 }
