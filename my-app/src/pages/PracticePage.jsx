@@ -83,7 +83,8 @@ const calculateVariance = (arr) => {
   return variance; 
 };
 
-const BRIGHTNESS_THRESHOLD = 40; 
+// רף הבהירות המעודכן
+const BRIGHTNESS_THRESHOLD = 30; 
 const SHOULDER_WIDTH_MIN = 0.25; 
 const SHOULDER_WIDTH_MAX = 0.65; 
 
@@ -122,6 +123,22 @@ function PracticePage() {
   const bodyTurnTimerRef = useRef(null);
   const dynamicFeedbackTimerRef = useRef(null);
 
+  // === Refs חדשים לייצוב (Debounce) בישיבה ===
+  const shoulderStabilityRef = useRef(0);
+  const eyeStabilityRef = useRef(0); 
+  const handsStabilityRef = useRef(0);
+  // silenceTimerRef - הוסר (לא צריך יותר)
+  const centeringStabilityRef = useRef(0);
+  const headTiltTimerRef = useRef(0);       
+  const lastDetectedTiltRef = useRef("");   
+  const cameraHeightStabilityRef = useRef(0);
+  const chinStabilityRef = useRef(0); 
+  const lastBadChinRef = useRef(""); 
+  // articulationTimerRef - הוסר (לא צריך יותר)
+  const smileTimerRef = useRef(0);
+  const browTimerRef = useRef(0);   
+  const squintTimerRef = useRef(0); 
+
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
 
@@ -147,11 +164,11 @@ function PracticePage() {
   const [bodyStatus, setBodyStatus] = useState("Waiting..."); 
   const [lightingStatus, setLightingStatus] = useState("Checking..."); 
   const [distanceStatus, setDistanceStatus] = useState("Checking...");
-  const [articulationStatus, setArticulationStatus] = useState("Silent 😶"); 
+  // articulationStatus - הוסר
   const [engagementStatus, setEngagementStatus] = useState("Balanced 🧘"); 
   
   const [volumeLevel, setVolumeLevel] = useState(0); 
-  const [audioStatus, setAudioStatus] = useState("Listening...");
+  // audioStatus - הוסר
 
   // === States למצב עמידה ===
   const [stageMovementStatus, setStageMovementStatus] = useState("Stand Still"); 
@@ -256,14 +273,20 @@ function PracticePage() {
     } catch (err) { console.error("Recording failed to start", err); }
   };
 
-  const analyzeLighting = (ctx, width, height) => {
+  const analyzeLighting = (videoElement) => {
     try {
-        const frameData = ctx.getImageData(width / 3, height / 3, width / 3, height / 3).data;
+        const canvas = document.createElement('canvas');
+        canvas.width = 50; 
+        canvas.height = 50;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+        const frameData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
         let totalBrightness = 0;
         for (let i = 0; i < frameData.length; i += 16) { 
             totalBrightness += (frameData[i] + frameData[i + 1] + frameData[i + 2]) / 3;
         }
-        if ((totalBrightness / (frameData.length / 16)) < BRIGHTNESS_THRESHOLD) return { status: "Too Dark 🌑", isGood: false };
+        const avgBrightness = totalBrightness / (frameData.length / 16);
+        if (avgBrightness < BRIGHTNESS_THRESHOLD) return { status: "Too Dark 🌑", isGood: false };
         return { status: "Lighting Good 💡", isGood: true };
     } catch (e) { return { status: "Checking...", isGood: true }; }
   };
@@ -271,17 +294,25 @@ function PracticePage() {
   const analyzeEyeContact = (blendshapes) => {
     if (!blendshapes) return { status: "No Face", isGood: false };
     const getScore = (name) => blendshapes.find(b => b.categoryName === name)?.score || 0;
+    
     const blink = getScore('eyeBlinkLeft') > 0.5 || getScore('eyeBlinkRight') > 0.5;
     if (blink) return { status: "Blinking 😌", isGood: true };
+    
     const gazeX = getScore('eyeLookInLeft') - getScore('eyeLookOutLeft'); 
     const gazeY = getScore('eyeLookUpLeft') - getScore('eyeLookDownLeft');
+    
     gazeHistoryRef.current.push({ x: gazeX, y: gazeY });
     if (gazeHistoryRef.current.length > 40) gazeHistoryRef.current.shift();
     const xVariance = calculateVariance(gazeHistoryRef.current.map(p => p.x));
-    const yVariance = calculateVariance(gazeHistoryRef.current.map(p => p.y));
-    if (xVariance > 0.002 && yVariance < 0.001) return { status: "Reading Text 📖", isGood: false };
-    if (xVariance < 0.0002 && yVariance < 0.0002 && gazeHistoryRef.current.length >= 40) return { status: "Zoning Out 😶", isGood: false };
-    if (Math.abs(gazeX) > 0.4 || Math.abs(gazeY) > 0.4) return { status: "Looking Away 🙄", isGood: false };
+    
+    if (Math.abs(gazeX) > 0.5 || Math.abs(gazeY) > 0.5) {
+        return { status: "Looking Away 🙄", isGood: false };
+    }
+
+    if (xVariance > 0.002 && xVariance < 0.015 && Math.abs(gazeX) < 0.3) {
+        return { status: "Reading Text 📖", isGood: true };
+    }
+    
     return { status: "Eye Contact 🤩", isGood: true };
   };
 
@@ -326,15 +357,19 @@ function PracticePage() {
             isTouching = true; break;
         }
     }
+    
     if (isTouching) return { status: "Don't touch face! ✋", isGood: false };
-    if (!(poseLandmarks[15].visibility > 0.5 || poseLandmarks[16].visibility > 0.5)) return { status: "Hands Hidden 🙈", isGood: false };
+    if (!(poseLandmarks[15].visibility > 0.5 || poseLandmarks[16].visibility > 0.5)) return { status: "Hands Hidden 🙈", isGood: true };
     return { status: "Hands Open 👐", isGood: true };
   };
 
   const analyzeCenteringAndDistance = (faceLandmarks, poseLandmarks) => {
     const nose = faceLandmarks[1];
     let centerStatus = "Centered ✅"; let isCentered = true;
-    if (nose.x < 0.4) { centerStatus = "Move Left ⬅️"; isCentered = false; } else if (nose.x > 0.6) { centerStatus = "Move Right ➡️"; isCentered = false; }
+    
+    if (nose.x < 0.4) { centerStatus = "Move Left ⬅️"; isCentered = false; } 
+    else if (nose.x > 0.6) { centerStatus = "Move Right ➡️"; isCentered = false; }
+    
     let distStatus = "Perfect Distance ✅";
     if (poseLandmarks) {
         const width = Math.abs(poseLandmarks[11].x - poseLandmarks[12].x);
@@ -350,11 +385,7 @@ function PracticePage() {
       return "Balanced Posture 🧘";
   };
 
-  const analyzeArticulation = (faceLandmarks, vol) => {
-      if (vol < 5) return { status: "Silent 😶", isGood: true }; 
-      if (Math.abs(faceLandmarks[13].y - faceLandmarks[14].y) < 0.015) return { status: "Open Mouth More 🗣️", isGood: false };
-      return { status: "Clear Speech 📢", isGood: true };
-  };
+  // analyzeArticulation - הוסר לחלוטין
 
   const analyzeExpression = (blendshapes) => {
     const getScore = (name) => blendshapes.find(b => b.categoryName === name)?.score || 0;
@@ -369,21 +400,26 @@ function PracticePage() {
   };
 
   const analyzeAudio = () => {
-    if (!analyserRef.current || !dataArrayRef.current) return { status: "Silence", isGood: false, vol: 0 };
+    if (!analyserRef.current || !dataArrayRef.current) return { vol: 0 };
     analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+    
+    // חישוב ממוצע העוצמה בתדרים השונים
     const avg = dataArrayRef.current.reduce((a, b) => a + b) / dataArrayRef.current.length;
-    const NOISE_FLOOR = 10;
-    let volume = avg > NOISE_FLOOR ? Math.min(100, Math.round((avg - NOISE_FLOOR) * 3)) : 0;
+    
+    // 1. העלינו את רף הרעש כדי להתעלם מרחשי רקע (מזגן וכו')
+    const NOISE_FLOOR = 15; 
+    
+    // 2. הורדנו את המכפיל מ-3 ל-1.2 כדי שהמד לא "יתפוצץ" ל-100 ישר
+    // דיבור רגיל ינוע עכשיו סביב 30-60 אחוז
+    let rawVolume = avg > NOISE_FLOOR ? (avg - NOISE_FLOOR) * 1.2 : 0;
+    
+    // חוסם ב-100 ומעגל
+    let volume = Math.min(100, Math.round(rawVolume));
+    
     setVolumeLevel(volume);
-    let status = "Silence 🔇"; let isGood = false;
-    if (volume > 5) { 
-        if (volume > 20 && volume < 85) { status = "Good Volume 🎙️"; isGood = true; }
-        else if (volume >= 85) { status = "Too Loud 🔊"; isGood = false; }
-        else { status = "Speaking 🔉"; isGood = true; }
-    }
-    return { status, isGood, vol: volume };
+    
+    return { vol: volume };
   };
-
   const drawFaceBox = (ctx, faceLandmarks, isTouching) => {
       if (!faceLandmarks) return;
       const xs = faceLandmarks.map(p => p.x);
@@ -440,34 +476,156 @@ function PracticePage() {
 
         if (practiceMode === 'sitting') {
             if (Date.now() - lastProcessTimeRef.current > 100) {
-                const lightRes = analyzeLighting(ctx, canvas.width, canvas.height);
+                
+                const lightRes = analyzeLighting(video); 
                 setLightingStatus(lightRes.status);
-                const audioRes = analyzeAudio(); setAudioStatus(audioRes.status);
+                
+                const audioRes = analyzeAudio(); // רק מקבל ווליום
+                // אין יותר לוגיקת סטטוסים של שמע/שתיקה
+
                 let eyeRes = { status: "No Face", isGood: false };
                 let posRes = { centerStatus: "No Face", isCentered: false, distStatus: "Waiting..." };
                 let exprRes = { smile: { status: "Neutral 😐", isSmiling: false }, brow: "Neutral 😐", squint: "..." };
                 let bodyRes = { status: "No Body", isGood: false };
-                let articRes = { status: "Silent", isGood: true }; 
                 let shoulderRes = { status: "Checking...", isLevel: false };
 
                 if (faceLms) {
                     posRes = analyzeCenteringAndDistance(faceLms, poseLms);
-                    setCenteringStatus(posRes.centerStatus); setDistanceStatus(posRes.distStatus);
-                    setHeadTiltStatus(analyzeHeadTilt(faceLms));
-                    articRes = analyzeArticulation(faceLms, audioRes.vol); setArticulationStatus(articRes.status);
-                    setCameraHeightStatus(analyzeCameraHeight(faceLms));
-                    setChinStatus(analyzeChinPitch(faceLms));
+                    
+                    if (!posRes.isCentered) {
+                        centeringStabilityRef.current += 1;
+                    } else {
+                        centeringStabilityRef.current = 0; 
+                    }
+                    if (centeringStabilityRef.current > 30) {
+                        setCenteringStatus(posRes.centerStatus); 
+                    } else if (centeringStabilityRef.current === 0) {
+                        setCenteringStatus("Centered ✅");
+                    }
+
+                    setDistanceStatus(posRes.distStatus);
+                    
+                    const rawTilt = analyzeHeadTilt(faceLms);
+                    if (rawTilt === lastDetectedTiltRef.current) {
+                        headTiltTimerRef.current += 1; 
+                    } else {
+                        headTiltTimerRef.current = 0; 
+                        lastDetectedTiltRef.current = rawTilt;
+                    }
+
+                    const isBadTilt = rawTilt.includes("Too Tilted");
+                    const tiltThreshold = isBadTilt ? 30 : 10; 
+                    
+                    if (headTiltTimerRef.current > tiltThreshold) {
+                        setHeadTiltStatus(rawTilt);
+                    }
+
+                    // --- אין יותר קריאה ל-analyzeArticulation ---
+                    
+                    const rawHeight = analyzeCameraHeight(faceLms);
+                    if (!rawHeight.includes("Perfect")) {
+                        cameraHeightStabilityRef.current += 1;
+                    } else {
+                        cameraHeightStabilityRef.current = Math.max(0, cameraHeightStabilityRef.current - 2);
+                    }
+
+                    if (cameraHeightStabilityRef.current > 30) {
+                        setCameraHeightStatus(rawHeight);
+                    } else if (cameraHeightStabilityRef.current === 0) {
+                        setCameraHeightStatus("Eye Level Perfect 👌");
+                    }
+
+                    const rawChin = analyzeChinPitch(faceLms);
+                    if (!rawChin.includes("Level")) {
+                        chinStabilityRef.current += 1;
+                        lastBadChinRef.current = rawChin;
+                    } else {
+                        chinStabilityRef.current = Math.max(0, chinStabilityRef.current - 5);
+                    }
+
+                    if (chinStabilityRef.current > 30) {
+                        setChinStatus(lastBadChinRef.current);
+                    } else if (chinStabilityRef.current === 0) {
+                        setChinStatus("Chin Level (Authority) 👑");
+                    }
                 }
                 if (faceResult.faceBlendshapes?.[0]) {
-                    eyeRes = analyzeEyeContact(faceResult.faceBlendshapes[0].categories); setEyeContactStatus(eyeRes.status);
+                    eyeRes = analyzeEyeContact(faceResult.faceBlendshapes[0].categories); 
+                    if (!eyeRes.isGood) {
+                        eyeStabilityRef.current += 1;
+                    } else {
+                        eyeStabilityRef.current = Math.max(0, eyeStabilityRef.current - 2);
+                    }
+                    if (eyeStabilityRef.current > 30) {
+                        setEyeContactStatus(eyeRes.status); 
+                    } else if (eyeStabilityRef.current === 0) {
+                        setEyeContactStatus(eyeRes.status); 
+                    }
                     exprRes = analyzeExpression(faceResult.faceBlendshapes[0].categories);
-                    setExpressionStatus(exprRes.smile.status); setBrowStatus(exprRes.brow); setSquintStatus(exprRes.squint);
+                    
+                    // --- חיוך דביק ---
+                    if (exprRes.smile.isSmiling) {
+                        smileTimerRef.current = 0; 
+                        setExpressionStatus(exprRes.smile.status); 
+                    } else {
+                        smileTimerRef.current += 1; 
+                        if (smileTimerRef.current > 20) { 
+                            setExpressionStatus(exprRes.smile.status); 
+                        }
+                    }
+
+                    // --- גבות דביקות ---
+                    if (exprRes.brow !== "Neutral 😐") {
+                        browTimerRef.current = 0;
+                        setBrowStatus(exprRes.brow);
+                    } else {
+                        browTimerRef.current += 1;
+                        if (browTimerRef.current > 20) {
+                            setBrowStatus("Neutral 😐");
+                        }
+                    }
+
+                    // --- כיווץ עיניים דביק ---
+                    if (exprRes.squint !== "Eyes Open 👀") {
+                        squintTimerRef.current = 0;
+                        setSquintStatus(exprRes.squint);
+                    } else {
+                        squintTimerRef.current += 1;
+                        if (squintTimerRef.current > 20) {
+                            setSquintStatus("Eyes Open 👀");
+                        }
+                    }
                 }
                 if (poseLms) {
                     bodyRes = faceLms ? analyzeBodyAndHands(poseLms, faceLms) : { status: (poseLms[15].visibility > 0.5 || poseLms[16].visibility > 0.5) ? "Hands Open 👐" : "Hands Hidden 🙈", isGood: false };
-                    setBodyStatus(bodyRes.status); if (!bodyRes.isGood) isTouchingFace = true;
+                    
+                    if (!bodyRes.isGood) {
+                         handsStabilityRef.current += 1;
+                    } else {
+                         handsStabilityRef.current = Math.max(0, handsStabilityRef.current - 2);
+                    }
+                    if (handsStabilityRef.current > 15) {
+                        setBodyStatus("Don't touch face! ✋");
+                        isTouchingFace = true; 
+                    } else if (handsStabilityRef.current === 0) {
+                        setBodyStatus(bodyRes.status); 
+                        isTouchingFace = false;
+                    }
+                    
                     setEngagementStatus(analyzeEngagement(poseLms));
-                    shoulderRes = analyzeShoulderStability(poseLms); setShoulderStatus(shoulderRes.status);
+                    
+                    shoulderRes = analyzeShoulderStability(poseLms); 
+                    if (!shoulderRes.isLevel) {
+                        shoulderStabilityRef.current += 1;
+                    } else {
+                        shoulderStabilityRef.current = Math.max(0, shoulderStabilityRef.current - 2);
+                    }
+                    
+                    if (shoulderStabilityRef.current > 20) {
+                        setShoulderStatus("Uneven Shoulders ⚖️");
+                    } else if (shoulderStabilityRef.current === 0) {
+                        setShoulderStatus("Posture Great ✅");
+                    }
                 }
                 if (eyeRes.status !== "No Face") {
                     statsRef.current.totalFrames += 1;
@@ -475,8 +633,7 @@ function PracticePage() {
                     if (posRes.isCentered) statsRef.current.centeredFrames += 1;
                     if (exprRes.smile.isSmiling) statsRef.current.smilingFrames += 1;
                     if (bodyRes.isGood) statsRef.current.handsAwayFromFaceFrames += 1;
-                    if (audioRes.isGood) statsRef.current.goodVolumeFrames += 1;
-                    if (articRes.isGood) statsRef.current.goodArticulationFrames += 1;
+                    if (audioRes.vol > 20) statsRef.current.goodVolumeFrames += 1; // רק בדיקה טכנית פשוטה
                     if (shoulderRes.isLevel) statsRef.current.goodPostureFrames += 1;
                 }
                 lastProcessTimeRef.current = Date.now();
@@ -546,11 +703,11 @@ function PracticePage() {
         centering: Math.round((statsRef.current.centeredFrames / total) * 100),
         hands: Math.round((statsRef.current.handsAwayFromFaceFrames / total) * 100),
         volume: Math.round((statsRef.current.goodVolumeFrames / total) * 100),
-        articulation: Math.round((statsRef.current.goodArticulationFrames / total) * 100),
+        articulation: 100, // כבר לא רלוונטי
         posture: Math.round((statsRef.current.goodPostureFrames / total) * 100)
     };
     
-    const finalScore = ((scores.eyeContact * 0.25) + (scores.centering * 0.15) + (scores.expression * 0.1) + (scores.hands * 0.15) + (scores.volume * 0.15) + (scores.posture * 0.1) + (scores.articulation * 0.1)).toFixed(1);
+    const finalScore = ((scores.eyeContact * 0.25) + (scores.centering * 0.15) + (scores.expression * 0.1) + (scores.hands * 0.15) + (scores.volume * 0.15) + (scores.posture * 0.1) + (0.1 * 10)).toFixed(1);
     
     // === הכנת המידע המעודכן לשליחה ===
     const sessionData = {
@@ -632,7 +789,7 @@ function PracticePage() {
                         {lightingStatus.includes("Dark") && <Badge bg="warning" className="position-absolute top-0 start-50 translate-middle-x m-3 text-dark">⚠️ תאורה חלשה</Badge>}
                         {distanceStatus.includes("Too") && <Badge bg="info" className="position-absolute bottom-0 start-50 translate-middle-x m-5">{distanceStatus}</Badge>}
                         {bodyStatus.includes("Don't touch") && <Badge bg="danger" className="position-absolute top-50 start-50 translate-middle p-3 fs-5 opacity-75">❌ הרחק ידיים מהפנים</Badge>}
-                        {articulationStatus.includes("Open") && <Badge bg="warning" className="position-absolute bottom-50 start-50 translate-middle p-2 text-dark">🗣️ דבר ברור יותר (פתח פה)</Badge>}
+                        {/* כאן הסרתי את הערת הדיבור המיותרת */}
                         {cameraHeightStatus.includes("Move") && <Badge bg="info" className="position-absolute bottom-0 start-50 translate-middle-x mb-2 fs-6 opacity-90">{cameraHeightStatus}</Badge>}
                     </>
                 )}
@@ -740,10 +897,15 @@ function PracticePage() {
                       </div>
                   </div>
                   <div className="text-center p-3 mt-auto" style={{ backgroundColor: '#f8f9fa', borderRadius: '15px' }}>
-                    <div className="d-flex justify-content-between mb-1"><small className="text-muted">VOLUME & CLARITY</small><small style={{fontSize: '0.7rem'}}>{volumeLevel}%</small></div>
-                    <ProgressBar now={volumeLevel} variant={volumeLevel > 75 ? "danger" : "primary"} style={{ height: '6px', borderRadius: '5px', marginBottom: '8px' }} />
-                    <div style={{ fontWeight: '700', fontSize: '0.8rem', color: '#555' }}>{audioStatus}</div>
-                    <div style={{ fontSize: '0.8rem', marginTop: '5px', color: articulationStatus.includes("Open") ? 'red' : 'green' }}>{articulationStatus}</div>
+                    <div className="d-flex justify-content-between mb-1">
+                        <small className="text-muted">MICROPHONE</small>
+                        <small style={{fontSize: '0.7rem'}}>{volumeLevel}%</small>
+                    </div>
+                    <ProgressBar 
+                        now={volumeLevel} 
+                        variant={volumeLevel > 75 ? "danger" : "primary"} 
+                        style={{ height: '6px', borderRadius: '5px', marginBottom: '0' }} 
+                    />
                   </div>
                 </Card.Body>
                 )}
