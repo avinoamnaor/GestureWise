@@ -12,7 +12,7 @@ import {
     analyzeDistance 
 } from '../utils/standingAnalysis';
 
-// --- רכיב התראה צפה (Smart Toast) ---
+// --- רכיב התראה צפה (Smart Toast) - ללא אימוג'ים ---
 const SmartToast = ({ message, type }) => {
     if (!message) return null;
     const colors = { warning: '#ffc107', danger: '#dc3545', success: '#198754' };
@@ -27,54 +27,61 @@ const SmartToast = ({ message, type }) => {
                  animation: 'fadeIn 0.3s ease-in-out' 
              }}>
             <h4 className="text-white m-0 fw-bold px-3">
-                {type === 'warning' && '⚠️'} {type === 'danger' && '🛑'} {type === 'success' && '✨'} {' ' + message}
+                {message}
             </h4>
         </div>
     );
 };
 
-// --- קומפוננטת תצוגה למצב עמידה ---
+// --- קומפוננטת תצוגה למצב עמידה (ללא אימוג'ים) ---
 const StageOverlay = ({ posture, movement, hands }) => {
     if (posture.includes("Step") || posture.includes("Too")) {
         return (
             <div className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" 
                  style={{ backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 20 }}>
                 <div className="text-center">
-                    <div style={{ fontSize: '5rem', marginBottom: '10px' }}>📏</div>
                     <h1 className="text-white fw-bold display-1">{posture}</h1>
                 </div>
             </div>
         );
     }
-    let message = null; let icon = null; let colorClass = "warning";
+    let message = null; let colorClass = "warning";
     if (hands.includes("Show") || hands.includes("Uncross") || hands.includes("Low") || hands.includes("Touch")) {
-        message = hands; icon = "👐"; colorClass = "warning";
+        message = hands; colorClass = "warning";
     } else if (movement.includes("Move") || movement.includes("Stop")) {
-        message = movement; icon = "🏃"; colorClass = "info";
+        message = movement; colorClass = "info";
     } else if (posture.includes("Straighten") || posture.includes("Look Up")) {
-        message = posture; icon = "👀"; colorClass = "warning";
+        message = posture; colorClass = "warning";
     }
     if (!message) return null;
     return (
         <div className="position-absolute top-50 start-50 translate-middle text-center p-4" 
              style={{ minWidth: '60%', borderRadius: '20px', zIndex: 10, backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)', border: `3px solid ${colorClass === 'warning' ? '#ffc107' : '#0dcaf0'}` }}>
-            <div style={{ fontSize: '3rem', marginBottom: '0' }}>{icon}</div>
             <h1 className={`fw-bold display-4 m-0 ${colorClass === 'warning' ? 'text-warning' : 'text-info'}`} style={{ textShadow: '2px 2px 4px #000' }}>{message}</h1>
         </div>
     );
 };
 
-// --- רכיב עזר לשורה בבר הצדדי ---
-const MetricRow = ({ label, value }) => {
-    const isPositive = value.includes("Good") || value.includes("Perfect") || value.includes("Centered") || value.includes("Straight") || value.includes("Level") || value.includes("Open") || value.includes("Smiling");
-    const isNegative = value.includes("Too") || value.includes("Don't") || value.includes("Away") || value.includes("Low") || value.includes("High") || value.includes("Uneven") || value.includes("Reading") || value.includes("Tucked");
+// --- רכיב מטריקה נקי וקומפקטי במיוחד ---
+const DashboardMetric = ({ label, value, subValue }) => {
+    const isPositive = (val) => val && (val.includes("Good") || val.includes("Perfect") || val.includes("Centered") || val.includes("Straight") || val.includes("Level") || val.includes("Open") || val.includes("Smiling") || val.includes("Engaged") || val.includes("Balanced") || val.includes("Lighting Good") || val.includes("Great"));
+    const isNegative = (val) => val && (val.includes("Too") || val.includes("Don't") || val.includes("Away") || val.includes("Low") || val.includes("High") || val.includes("Uneven") || val.includes("Reading") || val.includes("Tucked") || val.includes("Dark"));
     
+    const mainBad = isNegative(value);
+    const subBad = subValue ? isNegative(subValue) : false;
+    const mainGood = isPositive(value);
+    
+    const borderColor = (mainBad || subBad) ? '#dc3545' : (mainGood ? '#198754' : '#6c757d');
+    const textColor = (mainBad || subBad) ? 'text-danger' : (mainGood ? 'text-success' : 'text-dark');
+
     return (
-        <div className="d-flex justify-content-between align-items-center py-2 border-bottom" style={{ borderColor: '#eee' }}>
-            <span className="text-muted fw-bold small">{label}</span>
-            <span className={`small fw-bold ${isPositive ? 'text-success' : (isNegative ? 'text-danger' : 'text-dark')}`}>
-                {value}
-            </span>
+        // שימוש ב-p-1 לחיסכון במקום
+        <div className="bg-light p-1 mb-1 rounded-3 shadow-sm border-start border-4" style={{ borderColor: borderColor, minHeight: '42px', display: 'flex', alignItems: 'center' }}>
+            <div className="flex-grow-1 ps-2" style={{ lineHeight: '1' }}>
+                <h6 className="text-muted text-uppercase fw-bold m-0" style={{ fontSize: '0.65rem', letterSpacing: '0.5px' }}>{label}</h6>
+                <div className={`fw-bold ${textColor}`} style={{ fontSize: '0.95rem' }}>{value}</div>
+                {subValue && <div className={`fw-bold ${isNegative(subValue) ? 'text-danger' : 'text-muted'}`} style={{ fontSize: '0.75rem' }}>{subValue}</div>}
+            </div>
         </div>
     );
 };
@@ -90,6 +97,113 @@ const BRIGHTNESS_THRESHOLD = 30;
 const SHOULDER_WIDTH_MIN = 0.25; 
 const SHOULDER_WIDTH_MAX = 0.65; 
 
+// --- פונקציות ניתוח (ללא אימוג'ים) ---
+const analyzeLighting = (videoElement) => {
+    try {
+        const canvas = document.createElement('canvas'); canvas.width = 50; canvas.height = 50;
+        const ctx = canvas.getContext('2d'); ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+        const frameData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let totalBrightness = 0;
+        for (let i = 0; i < frameData.length; i += 16) { totalBrightness += (frameData[i] + frameData[i + 1] + frameData[i + 2]) / 3; }
+        const avgBrightness = totalBrightness / (frameData.length / 16);
+        if (avgBrightness < BRIGHTNESS_THRESHOLD) return { status: "Too Dark", isGood: false };
+        return { status: "Lighting Good", isGood: true };
+    } catch (e) { return { status: "Checking...", isGood: true }; }
+};
+
+const analyzeEyeContact = (blendshapes) => {
+    if (!blendshapes) return { status: "No Face", isGood: false };
+    const getScore = (name) => blendshapes.find(b => b.categoryName === name)?.score || 0;
+    
+    if (getScore('eyeBlinkLeft') > 0.5 || getScore('eyeBlinkRight') > 0.5) return { status: "Blinking", isGood: true };
+    
+    const gazeX = getScore('eyeLookInLeft') - getScore('eyeLookOutLeft'); 
+    const gazeY = getScore('eyeLookUpLeft') - getScore('eyeLookDownLeft');
+    
+    if (Math.abs(gazeX) > 0.5 || Math.abs(gazeY) > 0.5) return { status: "Looking Away", isGood: false };
+    
+    return { status: "Good Contact", isGood: true };
+};
+
+const analyzeHeadTilt = (landmarks) => {
+    const angle = Math.atan2(landmarks[263].y - landmarks[33].y, landmarks[263].x - landmarks[33].x) * (180 / Math.PI);
+    if (Math.abs(angle) < 8) return "Straight";
+    if (Math.abs(angle) < 20) return "Slight Tilt";
+    return "Too Tilted";
+};
+
+const analyzeCameraHeight = (faceLandmarks) => {
+    const avgEyeY = (faceLandmarks[33].y + faceLandmarks[263].y) / 2;
+    if (avgEyeY < 0.25) return "Camera Too Low";
+    if (avgEyeY > 0.55) return "Camera Too High";
+    return "Height Perfect";
+};
+
+const analyzeChinPitch = (landmarks) => {
+    const noseToEyeDist = landmarks[1].y - ((landmarks[33].y + landmarks[263].y) / 2);
+    if (noseToEyeDist < 0.055) return "Chin Too High";
+    if (noseToEyeDist > 0.12) return "Chin Tucked"; 
+    return "Chin Level";
+};
+
+const analyzeShoulderStability = (poseLandmarks) => {
+    if(!poseLandmarks[11] || !poseLandmarks[12]) return { status: "No Shoulders", isLevel: false };
+    if (Math.abs(poseLandmarks[11].y - poseLandmarks[12].y) > 0.04) return { status: "Uneven Shoulders", isLevel: false };
+    return { status: "Posture Great", isLevel: true };
+  };
+
+const analyzeBodyAndHands = (poseLandmarks, faceLandmarks) => {
+    if (!poseLandmarks) return { status: "No Body", isGood: false };
+    if (!faceLandmarks) return { status: "Hands Open", isGood: true };
+    const xs = faceLandmarks.map(p => p.x); const ys = faceLandmarks.map(p => p.y);
+    const pad = 0.05; 
+    const faceBox = { minX: Math.min(...xs)-pad, maxX: Math.max(...xs)+pad, minY: Math.min(...ys)-pad, maxY: Math.max(...ys)+pad };
+    const checkPoints = [15, 17, 19, 21, 16, 18, 20, 22];
+    let isTouching = false;
+    for (let i = 0; i < checkPoints.length; i++) {
+        const point = poseLandmarks[checkPoints[i]];
+        if (point && point.visibility > 0.3 && point.x >= faceBox.minX && point.x <= faceBox.maxX && point.y >= faceBox.minY && point.y <= faceBox.maxY) {
+            isTouching = true; break;
+        }
+    }
+    if (isTouching) return { status: "Don't touch face", isGood: false };
+    if (!(poseLandmarks[15].visibility > 0.5 || poseLandmarks[16].visibility > 0.5)) return { status: "Hands Hidden", isGood: true };
+    return { status: "Hands Open", isGood: true };
+};
+
+const analyzeCenteringAndDistance = (faceLandmarks, poseLandmarks) => {
+    const nose = faceLandmarks[1];
+    let centerStatus = "Centered"; let isCentered = true;
+    if (nose.x < 0.4) { centerStatus = "Move Left"; isCentered = false; } 
+    else if (nose.x > 0.6) { centerStatus = "Move Right"; isCentered = false; }
+    let distStatus = "Distance Perfect";
+    if (poseLandmarks) {
+        const width = Math.abs(poseLandmarks[11].x - poseLandmarks[12].x);
+        if (width < SHOULDER_WIDTH_MIN) distStatus = "Too Far"; else if (width > SHOULDER_WIDTH_MAX) distStatus = "Too Close";
+    }
+    return { centerStatus, isCentered, distStatus };
+};
+
+const analyzeEngagement = (poseLandmarks) => {
+    const width = Math.abs(poseLandmarks[11].x - poseLandmarks[12].x);
+    if (width > 0.55) return "Leaning In";
+    if (width < 0.30) return "Leaning Back";
+    return "Balanced Posture";
+};
+
+const analyzeExpression = (blendshapes) => {
+    const getScore = (name) => blendshapes.find(b => b.categoryName === name)?.score || 0;
+    const smile = (getScore('mouthSmileLeft') + getScore('mouthSmileRight')) / 2;
+    let smileStat = { status: "Neutral", isSmiling: false };
+    if (smile > 0.4) smileStat = { status: "Smiling", isSmiling: true };
+    
+    const browUp = (getScore('browOuterUpLeft') + getScore('browOuterUpRight') + getScore('browInnerUp')) / 3;
+    let browStat = browUp > 0.45 ? "High Energy" : (browUp > 0.2 ? "Expressive" : "Neutral");
+    const squint = (getScore('eyeSquintLeft') + getScore('eyeSquintRight')) / 2;
+    let squintStat = squint > 0.6 ? "Squinting" : "Eyes Open";
+    return { smile: smileStat, brow: browStat, squint: squintStat };
+};
+
 function PracticePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -100,25 +214,29 @@ function PracticePage() {
   const [practiceMode, setPracticeMode] = useState(null); 
   const [showModeSelector, setShowModeSelector] = useState(true); 
 
-  // --- ניהול ציון והתראות ---
+  const [isSetupPhase, setIsSetupPhase] = useState(true);
+
   const scoreRef = useRef(100); 
   const [liveScore, setLiveScore] = useState(100); 
   const [smartFeedback, setSmartFeedback] = useState(null); 
-  const lastAlertTimeRef = useRef(0);
-
-  // טיימרים לזיהוי וייצוב
+  
+  const engagementStabilityTimer = useRef(0); // סופר כמה זמן אנחנו במצב החדש
+  const lastEngagementCandidate = useRef("Balanced"); // המצב החדש שאנחנו בודקים
+  const [displayedEngagement, setDisplayedEngagement] = useState("Balanced"); // מה שמוצג בפועל למשתמש
+  
   const eyeStabilityRef = useRef(0);
   const centerStabilityRef = useRef(0);
   const handsStabilityRef = useRef(0);
   const chinStabilityRef = useRef(0);      
   const headTiltStabilityRef = useRef(0);  
-  const shoulderStabilityRef = useRef(0);  
+  const shoulderStabilityRef = useRef(0);
+  const lowVolumeTimerRef = useRef(0); 
   
-  const lastDetectedTiltRef = useRef("Straight 😐");   
-  const lastBadChinRef = useRef("Chin Level 👑"); 
-  const lastShoulderStatusRef = useRef("Posture Great ✅");
+  const lastDetectedTiltRef = useRef("Straight");   
+  const lastBadChinRef = useRef("Chin Level"); 
+  const lastShoulderStatusRef = useRef("Posture Great");
+  const gazeHistoryRef = useRef([]);
 
-  // סטטיסטיקות לסיכום
   const sessionStatsRef = useRef({
       eyesBadFrames: 0,
       centerBadFrames: 0,
@@ -128,7 +246,6 @@ function PracticePage() {
       smilingFrames: 0
   });
 
-  // --- Teleprompter States ---
   const [showTeleprompter, setShowTeleprompter] = useState(!!speechText);
   const [isScrolling, setIsScrolling] = useState(false);
   const [scrollSpeed, setScrollSpeed] = useState(30); 
@@ -138,7 +255,6 @@ function PracticePage() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   
-  // --- Refs למצב עמידה ---
   const movementHistoryRef = useRef([]); 
   const crossedArmsTimerRef = useRef(null); 
   const faceTouchTimerRef = useRef(null); 
@@ -163,24 +279,22 @@ function PracticePage() {
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false); 
   
-  // === Analysis States ===
-  const [centeringStatus, setCenteringStatus] = useState("Centered ✅"); 
-  const [expressionStatus, setExpressionStatus] = useState("Neutral 😐"); 
-  const [browStatus, setBrowStatus] = useState("Neutral 😐"); 
-  const [headTiltStatus, setHeadTiltStatus] = useState("Straight 😐");
-  const [cameraHeightStatus, setCameraHeightStatus] = useState("Checking... 📏");
-  const [shoulderStatus, setShoulderStatus] = useState("Checking... 🤷");
-  const [squintStatus, setSquintStatus] = useState("Eyes Open 👀");
+  const [centeringStatus, setCenteringStatus] = useState("Centered"); 
+  const [expressionStatus, setExpressionStatus] = useState("Neutral"); 
+  const [browStatus, setBrowStatus] = useState("Neutral"); 
+  const [headTiltStatus, setHeadTiltStatus] = useState("Straight");
+  const [cameraHeightStatus, setCameraHeightStatus] = useState("Checking...");
+  const [shoulderStatus, setShoulderStatus] = useState("Checking...");
+  const [squintStatus, setSquintStatus] = useState("Eyes Open");
   const [chinStatus, setChinStatus] = useState("Checking...");
-  const [eyeContactStatus, setEyeContactStatus] = useState("Good Contact 🤩"); 
-  const [bodyStatus, setBodyStatus] = useState("Hands Open 👐"); 
+  const [eyeContactStatus, setEyeContactStatus] = useState("Good Contact"); 
+  const [bodyStatus, setBodyStatus] = useState("Hands Open"); 
   const [lightingStatus, setLightingStatus] = useState("Checking..."); 
   const [distanceStatus, setDistanceStatus] = useState("Checking...");
-  const [engagementStatus, setEngagementStatus] = useState("Balanced 🧘"); 
+  const [engagementStatus, setEngagementStatus] = useState("Balanced"); 
   
   const [volumeLevel, setVolumeLevel] = useState(0); 
 
-  // === States למצב עמידה ===
   const [stageMovementStatus, setStageMovementStatus] = useState("Stand Still"); 
   const [postureStatus, setPostureStatus] = useState("Checking..."); 
   const [handsActivityStatus, setHandsActivityStatus] = useState("Inactive"); 
@@ -189,7 +303,6 @@ function PracticePage() {
   const poseLandmarkerRef = useRef(null);
   const requestRef = useRef(null);
   const lastProcessTimeRef = useRef(0);
-  const gazeHistoryRef = useRef([]); 
   
   const startTimeRef = useRef(Date.now());
 
@@ -247,6 +360,16 @@ function PracticePage() {
     };
   }, []);
 
+  // --- טיימר: 15 שניות ---
+  useEffect(() => {
+    if (isModelsLoaded && practiceMode === 'sitting') {
+        const timer = setTimeout(() => {
+            setIsSetupPhase(false);
+        }, 10000); 
+        return () => clearTimeout(timer);
+    }
+  }, [isModelsLoaded, practiceMode]);
+
   useEffect(() => {
     if (isModelsLoaded && practiceMode) {
         predictWebcam();
@@ -264,130 +387,24 @@ function PracticePage() {
     } catch (err) { console.error("Recording failed to start", err); }
   };
 
-  // --- פונקציות ניתוח ---
-  const analyzeLighting = (videoElement) => {
-    try {
-        const canvas = document.createElement('canvas'); canvas.width = 50; canvas.height = 50;
-        const ctx = canvas.getContext('2d'); ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-        const frameData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        let totalBrightness = 0;
-        for (let i = 0; i < frameData.length; i += 16) { totalBrightness += (frameData[i] + frameData[i + 1] + frameData[i + 2]) / 3; }
-        const avgBrightness = totalBrightness / (frameData.length / 16);
-        if (avgBrightness < BRIGHTNESS_THRESHOLD) return { status: "Too Dark 🌑", isGood: false };
-        return { status: "Lighting Good 💡", isGood: true };
-    } catch (e) { return { status: "Checking...", isGood: true }; }
-  };
-
-  const analyzeEyeContact = (blendshapes) => {
-    if (!blendshapes) return { status: "No Face", isGood: false };
-    const getScore = (name) => blendshapes.find(b => b.categoryName === name)?.score || 0;
-    
-    if (getScore('eyeBlinkLeft') > 0.5 || getScore('eyeBlinkRight') > 0.5) return { status: "Blinking 😌", isGood: true };
-    
-    const gazeX = getScore('eyeLookInLeft') - getScore('eyeLookOutLeft'); 
-    const gazeY = getScore('eyeLookUpLeft') - getScore('eyeLookDownLeft');
-    
-    gazeHistoryRef.current.push({ x: gazeX });
-    if (gazeHistoryRef.current.length > 40) gazeHistoryRef.current.shift();
-    const xVariance = calculateVariance(gazeHistoryRef.current.map(p => p.x));
-    
-    if (Math.abs(gazeX) > 0.5 || Math.abs(gazeY) > 0.5) return { status: "Looking Away 🙄", isGood: false };
-    if (xVariance > 0.002 && xVariance < 0.015 && Math.abs(gazeX) < 0.3) return { status: "Reading Text 📖", isGood: true };
-    
-    return { status: "Good Contact 🤩", isGood: true };
-  };
-
-  const analyzeHeadTilt = (landmarks) => {
-    const angle = Math.atan2(landmarks[263].y - landmarks[33].y, landmarks[263].x - landmarks[33].x) * (180 / Math.PI);
-    if (Math.abs(angle) < 8) return "Straight (Authority) 🤴";
-    if (Math.abs(angle) < 20) return "Slight Tilt (Empathy) 🙂";
-    return "Too Tilted (Unsure) 🫤";
-  };
-
-  const analyzeCameraHeight = (faceLandmarks) => {
-    const avgEyeY = (faceLandmarks[33].y + faceLandmarks[263].y) / 2;
-    if (avgEyeY < 0.25) return "Camera Too Low (Move Up) 🔽";
-    if (avgEyeY > 0.55) return "Camera Too High (Move Down) 🔼";
-    return "Eye Level Perfect 👌";
-  };
-
-  const analyzeChinPitch = (landmarks) => {
-      const noseToEyeDist = landmarks[1].y - ((landmarks[33].y + landmarks[263].y) / 2);
-      if (noseToEyeDist < 0.055) return "Chin Too High (Arrogant) 🦒";
-      // נשאר 0.12 כפי שנקבע בקובץ שלך
-      if (noseToEyeDist > 0.12) return "Chin Tucked (Insecure) 🙇"; 
-      return "Chin Level (Authority) 👑";
-  };
-
-  const analyzeShoulderStability = (poseLandmarks) => {
-    if(!poseLandmarks[11] || !poseLandmarks[12]) return { status: "No Shoulders", isLevel: false };
-    if (Math.abs(poseLandmarks[11].y - poseLandmarks[12].y) > 0.04) return { status: "Uneven Shoulders ⚖️", isLevel: false };
-    return { status: "Posture Great ✅", isLevel: true };
-  };
-
-  const analyzeBodyAndHands = (poseLandmarks, faceLandmarks) => {
-    if (!poseLandmarks) return { status: "No Body", isGood: false };
-    if (!faceLandmarks) return { status: "Hands Open 👐", isGood: true };
-    const xs = faceLandmarks.map(p => p.x); const ys = faceLandmarks.map(p => p.y);
-    const pad = 0.05; 
-    const faceBox = { minX: Math.min(...xs)-pad, maxX: Math.max(...xs)+pad, minY: Math.min(...ys)-pad, maxY: Math.max(...ys)+pad };
-    const checkPoints = [15, 17, 19, 21, 16, 18, 20, 22];
-    let isTouching = false;
-    for (let i = 0; i < checkPoints.length; i++) {
-        const point = poseLandmarks[checkPoints[i]];
-        if (point && point.visibility > 0.3 && point.x >= faceBox.minX && point.x <= faceBox.maxX && point.y >= faceBox.minY && point.y <= faceBox.maxY) {
-            isTouching = true; break;
-        }
-    }
-    if (isTouching) return { status: "Don't touch face! ✋", isGood: false };
-    if (!(poseLandmarks[15].visibility > 0.5 || poseLandmarks[16].visibility > 0.5)) return { status: "Hands Hidden 🙈", isGood: true };
-    return { status: "Hands Open 👐", isGood: true };
-  };
-
-  const analyzeCenteringAndDistance = (faceLandmarks, poseLandmarks) => {
-    const nose = faceLandmarks[1];
-    let centerStatus = "Centered ✅"; let isCentered = true;
-    if (nose.x < 0.4) { centerStatus = "Move Left ⬅️"; isCentered = false; } 
-    else if (nose.x > 0.6) { centerStatus = "Move Right ➡️"; isCentered = false; }
-    let distStatus = "Perfect Distance ✅";
-    if (poseLandmarks) {
-        const width = Math.abs(poseLandmarks[11].x - poseLandmarks[12].x);
-        if (width < SHOULDER_WIDTH_MIN) distStatus = "Too Far 🔍"; else if (width > SHOULDER_WIDTH_MAX) distStatus = "Too Close 🔙";
-    }
-    return { centerStatus, isCentered, distStatus };
-  };
-
-  const analyzeEngagement = (poseLandmarks) => {
-      const width = Math.abs(poseLandmarks[11].x - poseLandmarks[12].x);
-      if (width > 0.55) return "Leaning In (Engaged) 🔥";
-      if (width < 0.30) return "Leaning Back (Relaxed) 🛋️";
-      return "Balanced Posture 🧘";
-  };
-
-  const analyzeExpression = (blendshapes) => {
-    const getScore = (name) => blendshapes.find(b => b.categoryName === name)?.score || 0;
-    const smile = (getScore('mouthSmileLeft') + getScore('mouthSmileRight')) / 2;
-    let smileStat = { status: "Neutral 😐", isSmiling: false };
-    if (smile > 0.4) smileStat = { status: "Smiling 😊", isSmiling: true };
-    const browUp = (getScore('browOuterUpLeft') + getScore('browOuterUpRight') + getScore('browInnerUp')) / 3;
-    let browStat = browUp > 0.45 ? "High Energy 😲" : (browUp > 0.2 ? "Expressive 🤨" : "Neutral 😐");
-    const squint = (getScore('eyeSquintLeft') + getScore('eyeSquintRight')) / 2;
-    let squintStat = squint > 0.6 ? "Squinting (Focus/Doubt) 😑" : "Eyes Open 👀";
-    return { smile: smileStat, brow: browStat, squint: squintStat };
-  };
-
   const analyzeAudio = () => {
     if (!analyserRef.current || !dataArrayRef.current) return { vol: 0 };
     analyserRef.current.getByteFrequencyData(dataArrayRef.current);
     const avg = dataArrayRef.current.reduce((a, b) => a + b) / dataArrayRef.current.length;
-    const NOISE_FLOOR = 15; 
-    let rawVolume = avg > NOISE_FLOOR ? (avg - NOISE_FLOOR) * 1.2 : 0;
+    
+    // הורדנו טיפה את הרף התחתון (מ-15 ל-10) כדי שיקלוט גם דיבור שקט
+    const NOISE_FLOOR = 10; 
+    
+    // השינוי הגדול: הגדלנו את המכפיל מ-1.2 ל-4.0
+    // זה ה"ווליום" של המד - ככל שהמספר גבוה יותר, הבר יתמלא יותר בקלות
+    let rawVolume = avg > NOISE_FLOOR ? (avg - NOISE_FLOOR) * 2.0 : 0;
+    
     let volume = Math.min(100, Math.round(rawVolume));
     setVolumeLevel(volume);
     return { vol: volume };
   };
 
-  const drawFaceBox = (ctx, faceLandmarks, isTouching) => {
+  /*const drawFaceBox = (ctx, faceLandmarks, isTouching) => {
       if (!faceLandmarks) return;
       const xs = faceLandmarks.map(p => p.x); const ys = faceLandmarks.map(p => p.y); 
       const pad = 0.05; 
@@ -416,7 +433,7 @@ function PracticePage() {
       };
       drawHandConnections([15, 17, 19, 21], isTouching ? "red" : "#00ff00");
       drawHandConnections([16, 18, 20, 22], isTouching ? "red" : "#00ff00");
-  };
+  }; */
 
   const predictWebcam = () => {
     const video = videoRef.current;
@@ -433,54 +450,58 @@ function PracticePage() {
         const faceLms = faceResult.faceLandmarks?.[0];
         const poseLms = poseResult.landmarks?.[0];
 
-        // --- מצב ישיבה: לוגיקה משולבת (יציבות + ניקוד) ---
         if (practiceMode === 'sitting') {
-            
-            // משתנה לציור, מתעדכן בכל פריים על בסיס ה-Ref כדי למנוע הבהוב
             const isTouchingFaceForDrawing = handsStabilityRef.current > 20;
 
             if (Date.now() - lastProcessTimeRef.current > 50) { 
-                
-                // עדכון סטטיסטיקה כללית
                 sessionStatsRef.current.totalFrames++;
                 let isFramePerfect = true; 
                 let alertMessage = null;
 
-                // בדיקות סביבה ורקע
                 const lightRes = analyzeLighting(video); 
                 setLightingStatus(lightRes.status);
                 const audioRes = analyzeAudio(); 
                 if (audioRes.vol > 20) sessionStatsRef.current.goodVolumeFrames++;
 
+                if (audioRes.vol < 10) {
+                    lowVolumeTimerRef.current++;
+                } else {
+                    lowVolumeTimerRef.current = 0;
+                }
+
+                if (lowVolumeTimerRef.current > 160) {
+                    isFramePerfect = false;
+                    if ((lowVolumeTimerRef.current - 160) % 200 === 0) {
+                        scoreRef.current = Math.max(0, scoreRef.current - 2); 
+                        alertMessage = { text: "דבר בקול רם!", type: "warning" };
+                    }
+                }
+
                 let eyeRes = { status: "No Face", isGood: false };
                 let posRes = { centerStatus: "No Face", isCentered: false };
                 let bodyRes = { status: "No Body", isGood: false };
 
-                // 1. ניתוח קשר עין
                 if (faceResult.faceBlendshapes?.[0]) {
                     eyeRes = analyzeEyeContact(faceResult.faceBlendshapes[0].categories);
                     
                     if (!eyeRes.isGood) {
                         eyeStabilityRef.current += 1;
                     } else {
-                        // ירידה הדרגתית כדי למנוע הבהוב
                         eyeStabilityRef.current = Math.max(0, eyeStabilityRef.current - 2);
                     }
 
-                    // סף לתצוגה ויזואלית (נדבק מהר יחסית)
                     if (eyeStabilityRef.current > 15) {
-                        setEyeContactStatus("Looking Away 🙄");
+                        setEyeContactStatus("Looking Away");
                     } else {
-                        setEyeContactStatus(eyeRes.status === "Reading Text 📖" ? "Reading Text 📖" : "Good Contact 🤩");
+                        setEyeContactStatus(eyeRes.status === "Reading Text" ? "Reading Text" : "Good Contact");
                     }
 
-                    // סף לענישה והתראה
                     if (eyeStabilityRef.current > 40) { 
                         isFramePerfect = false;
                         if ((eyeStabilityRef.current - 40) % 40 === 0) {
                             scoreRef.current = Math.max(0, scoreRef.current - 3); 
                             sessionStatsRef.current.eyesBadFrames += 40; 
-                            alertMessage = { text: "שמור על קשר עין 👀", type: "warning" };
+                            alertMessage = { text: "שמור על קשר עין", type: "warning" };
                         }
                     } 
 
@@ -488,12 +509,11 @@ function PracticePage() {
                     if(exprRes.smile.isSmiling) {
                          sessionStatsRef.current.smilingFrames++;
                          setExpressionStatus(exprRes.smile.status);
-                    } else setExpressionStatus("Neutral 😐");
+                    } else setExpressionStatus("Neutral");
                     setBrowStatus(exprRes.brow);
                     setSquintStatus(exprRes.squint);
                 }
 
-                // 2. ניתוח ידיים
                 if (poseLms && faceLms) {
                     bodyRes = analyzeBodyAndHands(poseLms, faceLms);
                     
@@ -503,50 +523,44 @@ function PracticePage() {
                         handsStabilityRef.current = Math.max(0, handsStabilityRef.current - 2);
                     }
 
-                    // סף ויזואלי
                     if (handsStabilityRef.current > 15) {
-                        setBodyStatus("Don't touch face! ✋");
+                        setBodyStatus("Don't touch face");
                     } else {
-                        setBodyStatus("Hands Open 👐");
+                        setBodyStatus("Hands Open");
                     }
 
-                    // סף ענישה
                     if (handsStabilityRef.current > 30) { 
                         isFramePerfect = false;
                         if ((handsStabilityRef.current - 30) % 30 === 0) {
                             scoreRef.current = Math.max(0, scoreRef.current - 5); 
                             sessionStatsRef.current.handsBadFrames += 30;
-                            alertMessage = { text: "הרחק ידיים מהפנים ✋", type: "danger" };
+                            alertMessage = { text: "הרחק ידיים מהפנים", type: "danger" };
                         }
                     }
 
-                    // --- כתפיים (נוסף Alert) ---
                     const shoulderRes = analyzeShoulderStability(poseLms);
                     if (!shoulderRes.isLevel) shoulderStabilityRef.current++;
                     else shoulderStabilityRef.current = Math.max(0, shoulderStabilityRef.current - 2);
                     
-                    // שלב 1: חיווי ויזואלי (45 פריימים = 1.5 שניות)
                     if (shoulderStabilityRef.current > 45) {
-                        setShoulderStatus("Uneven Shoulders ⚖️");
-                        lastShoulderStatusRef.current = "Uneven Shoulders ⚖️";
+                        setShoulderStatus("Uneven Shoulders");
+                        lastShoulderStatusRef.current = "Uneven Shoulders";
                     } else if (shoulderStabilityRef.current === 0) {
-                        setShoulderStatus("Posture Great ✅");
-                        lastShoulderStatusRef.current = "Posture Great ✅";
+                        setShoulderStatus("Posture Great");
+                        lastShoulderStatusRef.current = "Posture Great";
                     } else {
                         setShoulderStatus(lastShoulderStatusRef.current);
                     }
 
-                    // שלב 2: התראה קופצת (60 פריימים = 2 שניות)
                     if (shoulderStabilityRef.current > 60) {
                         isFramePerfect = false;
                         if ((shoulderStabilityRef.current - 60) % 90 === 0) {
                             scoreRef.current = Math.max(0, scoreRef.current - 5);
-                            alertMessage = { text: "ישר את הכתפיים! ⚖️", type: "warning" };
+                            alertMessage = { text: "ישר את הכתפיים", type: "warning" };
                         }
                     }
                 }
 
-                // 3. ניתוח מרכוז ומיקום
                 if (faceLms) {
                     posRes = analyzeCenteringAndDistance(faceLms, poseLms);
                     
@@ -556,80 +570,96 @@ function PracticePage() {
                         centerStabilityRef.current = 0;
                     }
 
-                    // סף ויזואלי
                     if (centerStabilityRef.current > 20) {
                         setCenteringStatus(posRes.centerStatus);
                     } else {
-                        setCenteringStatus("Centered ✅");
+                        setCenteringStatus("Centered");
                     }
 
-                    // סף ענישה
                     if (centerStabilityRef.current > 40) { 
                         isFramePerfect = false;
                         if ((centerStabilityRef.current - 40) % 40 === 0) {
                             scoreRef.current = Math.max(0, scoreRef.current - 4);
                             sessionStatsRef.current.centerBadFrames += 40;
-                            alertMessage = { text: posRes.centerStatus + " 🎯", type: "warning" };
+                            alertMessage = { text: posRes.centerStatus, type: "warning" };
                         }
                     }
 
                     setDistanceStatus(posRes.distStatus);
                     
-                    // --- ייצוב הטיית ראש (נוסף Alert) ---
                     const rawTilt = analyzeHeadTilt(faceLms);
                     if (rawTilt.includes("Too Tilted")) headTiltStabilityRef.current++;
                     else headTiltStabilityRef.current = Math.max(0, headTiltStabilityRef.current - 2);
 
-                    // שלב 1: חיווי ויזואלי (45 פריימים = 1.5 שניות)
                     if (headTiltStabilityRef.current > 45) {
                         setHeadTiltStatus(rawTilt);
                         lastDetectedTiltRef.current = rawTilt;
                     } else if (headTiltStabilityRef.current === 0) {
-                        setHeadTiltStatus("Straight 😐");
+                        setHeadTiltStatus("Straight");
                     } else {
                         setHeadTiltStatus(lastDetectedTiltRef.current);
                     }
 
-                    // שלב 2: התראה קופצת (60 פריימים = 2 שניות)
                     if (headTiltStabilityRef.current > 60) {
                         isFramePerfect = false;
                         if ((headTiltStabilityRef.current - 60) % 90 === 0) {
                             scoreRef.current = Math.max(0, scoreRef.current - 5);
-                            alertMessage = { text: "ישר את הראש! 😐", type: "warning" };
+                            alertMessage = { text: "ישר את הראש", type: "warning" };
                         }
                     }
 
-                    // --- ייצוב סנטר (עם השינוי ל-2 שניות) ---
                     const rawChin = analyzeChinPitch(faceLms);
                     if (rawChin.includes("Too") || rawChin.includes("Tucked")) chinStabilityRef.current++;
                     else chinStabilityRef.current = Math.max(0, chinStabilityRef.current - 2);
 
-                    // שלב 1: חיווי ויזואלי בלבד (אחרי 1.5 שניות / 45 פריימים)
                     if (chinStabilityRef.current > 45) {
                         setChinStatus(rawChin);
                         lastBadChinRef.current = rawChin;
                     } else if (chinStabilityRef.current === 0) {
-                        setChinStatus("Chin Level 👑");
+                        setChinStatus("Chin Level");
                     } else {
                         setChinStatus(lastBadChinRef.current);
                     }
 
-                    // שלב 2: התראה קופצת למסך (אחרי 2 שניות / 60 פריימים)
                     if (chinStabilityRef.current > 60) {
                          isFramePerfect = false;
-                         // התראה ראשונה ב-60, וחזרות כל 3 שניות (90 פריימים)
                          if ((chinStabilityRef.current - 60) % 90 === 0) {
                              scoreRef.current = Math.max(0, scoreRef.current - 5);
-                             alertMessage = { text: "הרם את הראש! 👑", type: "warning" };
+                             alertMessage = { text: "הרם את הראש", type: "warning" };
                          }
                     }
 
                     const rawCam = analyzeCameraHeight(faceLms);
                     setCameraHeightStatus(rawCam);
-                    if(poseLms) setEngagementStatus(analyzeEngagement(poseLms));
+                    // --- ייצוב Engagement (Relaxed / Leaning) ---
+                    if (poseLms) {
+                        const currentRawEngagement = analyzeEngagement(poseLms);
+                        
+                        // אם המצב שונה ממה שמוצג כרגע
+                        if (currentRawEngagement !== displayedEngagement) {
+                            // האם זה אותו מצב כמו בפריים הקודם? (כלומר, אנחנו ברצף של שינוי)
+                            if (currentRawEngagement === lastEngagementCandidate.current) {
+                                engagementStabilityTimer.current++;
+                            } else {
+                                // התחלנו רצף חדש של מצב אחר
+                                engagementStabilityTimer.current = 0;
+                                lastEngagementCandidate.current = currentRawEngagement;
+                            }
+
+                            // סף השינוי: רק אחרי 20 פריימים רצופים (כ-0.7 שניות) נעדכן את התצוגה
+                            if (engagementStabilityTimer.current > 20) {
+                                setDisplayedEngagement(currentRawEngagement);
+                                // (אופציונלי) כאן אפשר לעדכן גם את הסטייט המקורי אם משתמשים בו במקומות אחרים
+                                setEngagementStatus(currentRawEngagement); 
+                                engagementStabilityTimer.current = 0;
+                            }
+                        } else {
+                            // אם המצב חזר להיות כמו המוצג, נאפס את הטיימר
+                            engagementStabilityTimer.current = 0;
+                        }
+                    }
                 }
 
-                // --- עדכונים כלליים ---
                 if (isFramePerfect) {
                     scoreRef.current = Math.min(100, scoreRef.current + 0.01);
                 }
@@ -647,9 +677,8 @@ function PracticePage() {
             }
             if (faceLms) drawFaceBox(ctx, faceLms, isTouchingFaceForDrawing);
             if (poseLms) drawHands(ctx, poseLms, isTouchingFaceForDrawing);
-        }
+        } 
         
-        // --- מצב עמידה (ללא שינוי, הלוגיקה המקורית) ---
         else if (practiceMode === 'standing') {
             if (Date.now() - lastProcessTimeRef.current > 100) {
                 if (poseLms) {
@@ -697,7 +726,6 @@ function PracticePage() {
     const durationSeconds = (Date.now() - startTimeRef.current) / 1000;
     const formattedDuration = `${Math.floor(durationSeconds / 60)}:${Math.floor(durationSeconds % 60) < 10 ? '0' : ''}${Math.floor(durationSeconds % 60)}`;
     
-    // חישוב המטריקות הסופיות לפי הטעויות שקרו בפועל
     const total = Math.max(1, sessionStatsRef.current.totalFrames);
     const calcMetric = (badFrames) => Math.max(0, Math.round(100 - (badFrames / total * 100)));
 
@@ -720,7 +748,7 @@ function PracticePage() {
         practiceMode: practiceMode || 'sitting',
         date: new Date(),
         duration: formattedDuration,
-        overallScore: liveScore, // הציון הסופי הוא מה שרואים על המסך
+        overallScore: liveScore, 
         metrics: scores,
     };
     
@@ -791,6 +819,46 @@ function PracticePage() {
                   <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)' }} />
                   <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', transform: 'scaleX(-1)', pointerEvents: 'none' }} />
                   
+                  {/* --- Floating Volume HUD (עיצוב אלגנטי וצדדי) --- */}
+                  {practiceMode === 'sitting' && (
+                      <div className="position-absolute bottom-0 end-0 m-3 px-3 py-2 shadow-sm" 
+                           style={{ 
+                               zIndex: 20, 
+                               backgroundColor: 'rgba(255, 255, 255, 0.75)', // שקיפות גבוהה יותר
+                               backdropFilter: 'blur(5px)', // אפקט טשטוש רקע (Glassmorphism)
+                               borderRadius: '20px', 
+                               display: 'flex', 
+                               alignItems: 'center', 
+                               gap: '10px',
+                               minWidth: '140px', // קומפקטי יותר
+                               maxWidth: '180px',
+                               border: '1px solid rgba(255,255,255,0.4)',
+                               transition: 'all 0.3s ease'
+                           }}>
+                          
+                          {/* אייקון קטן ונקי */}
+                          <span style={{ fontSize: '0.9rem', opacity: 0.8 }}>
+                              {volumeLevel < 5 ? '🔇' : '🎙️'}
+                          </span>
+                          
+                          {/* הבר והטקסט */}
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <div className="d-flex justify-content-between align-items-center">
+                                  {/* טקסט מינימליסטי */}
+                                  <small className="fw-bold text-secondary" style={{ fontSize: '0.55rem', letterSpacing: '0.5px' }}>
+                                      {volumeLevel < 10 ? "LOW" : "ACTIVE"}
+                                  </small>
+                                  <small className="fw-bold text-dark" style={{ fontSize: '0.6rem' }}>{volumeLevel}%</small>
+                              </div>
+                              <ProgressBar 
+                                  now={volumeLevel} 
+                                  variant={volumeLevel > 75 ? "danger" : (volumeLevel < 10 ? "warning" : "success")} 
+                                  style={{ height: '4px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.1)' }} 
+                              />
+                          </div>
+                      </div>
+                  )}
+
                   {speechText && showTeleprompter && (
                     <div className="position-absolute top-0 start-50 translate-middle-x mt-3 d-flex align-items-start gap-3" style={{ width: '80%', zIndex: 100 }}>
                         <div 
@@ -817,59 +885,52 @@ function PracticePage() {
             </Col>
 
             <Col lg={3} className="h-100 pb-2">
-              <Card className="h-100 border-0 shadow-sm bg-white" style={{ borderRadius: '20px', overflowY: 'auto' }}>
-                <Card.Header className="bg-transparent border-0 pt-4 px-4"><h6 className="font-weight-bold m-0" style={{ color: '#333' }}>Analysis Metrics</h6></Card.Header>
+              <Card className="h-100 border-0 shadow-sm bg-white" style={{ borderRadius: '20px', overflow: 'hidden' }}>
+                <Card.Header className="bg-transparent border-0 pt-3 px-3 pb-1 flex-shrink-0">
+                    <div className="d-flex justify-content-between align-items-center">
+                        <h6 className="font-weight-bold m-0" style={{ color: '#333', fontSize: '0.9rem' }}>
+                            {isSetupPhase ? "ENVIRONMENT CHECK" : "LIVE ANALYSIS"}
+                        </h6>
+                        {isSetupPhase && <Badge bg="warning" className="text-dark" style={{fontSize: '0.6rem'}}>Setup</Badge>}
+                    </div>
+                </Card.Header>
+                
                 {practiceMode === 'sitting' && (
-                <Card.Body className="d-flex flex-column px-4 gap-2">
+                <Card.Body className="d-flex flex-column px-2 pb-2 pt-0 gap-2" style={{ height: '100%', overflow: 'hidden' }}>
                   
-                  {/* --- הציון הגדול --- */}
-                  <div className="text-center p-3 mb-2 bg-light border rounded">
-                      <small className="text-muted fw-bold">LIVE SCORE</small>
-                      <div style={{ fontSize: '3.5rem', fontWeight: '800', lineHeight: 1, color: liveScore > 80 ? '#28a745' : (liveScore > 60 ? '#ffc107' : '#dc3545') }}>
+                  {/* 1. ציון - קבוע למעלה, גודל מוקטן */}
+                  <div className="text-center p-1 bg-light border rounded flex-shrink-0">
+                      <small className="text-muted fw-bold" style={{ fontSize: '0.65rem' }}>LIVE SCORE</small>
+                      <div style={{ fontSize: '2.2rem', fontWeight: '800', lineHeight: 1, color: liveScore > 80 ? '#28a745' : (liveScore > 60 ? '#ffc107' : '#dc3545') }}>
                           {liveScore}
                       </div>
                   </div>
 
-                  {/* רשימת המדדים המלאה לבדיקת QA */}
-                  <div className="bg-light p-3 rounded-4 mb-2">
-                      <h6 className="text-muted fw-bold small mb-2 border-bottom pb-1">EXPRESSION & HEAD</h6>
-                      <MetricRow label="Expression" value={expressionStatus} />
-                      <MetricRow label="Brows" value={browStatus} />
-                      <MetricRow label="Squint" value={squintStatus} />
-                      <MetricRow label="Head Tilt" value={headTiltStatus} />
-                      <MetricRow label="Chin Pitch" value={chinStatus} />
-                  </div>
+                  {/* 2. אזור המדדים - מתגמש ותופס את המקום הפנוי */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', overflow: 'hidden', justifyContent: 'space-evenly' }}>
+                      
+                      {isSetupPhase && (
+                        <>
+                            <DashboardMetric label="Lighting" value={lightingStatus} />
+                            <DashboardMetric label="Distance" value={distanceStatus} />
+                            <DashboardMetric label="Camera Height" value={cameraHeightStatus} />
+                        </>
+                      )}
 
-                  <div className="bg-light p-3 rounded-4 mb-2">
-                      <h6 className="text-muted fw-bold small mb-2 border-bottom pb-1">POSTURE & BODY</h6>
-                      <MetricRow label="Eye Contact" value={eyeContactStatus} />
-                      <MetricRow label="Hands" value={bodyStatus} />
-                      <MetricRow label="Center" value={centeringStatus} />
-                      <MetricRow label="Shoulders" value={shoulderStatus} />
-                      <MetricRow label="Engagement" value={engagementStatus} />
-                  </div>
-
-                  <div className="bg-light p-3 rounded-4 mb-2">
-                      <h6 className="text-muted fw-bold small mb-2 border-bottom pb-1">ENVIRONMENT</h6>
-                      <MetricRow label="Lighting" value={lightingStatus} />
-                      <MetricRow label="Distance" value={distanceStatus} />
-                      <MetricRow label="Cam Height" value={cameraHeightStatus} />
-                  </div>
-
-                  {/* מיקרופון */}
-                  <div className="text-center p-3 mt-auto" style={{ backgroundColor: '#f8f9fa', borderRadius: '15px' }}>
-                    <div className="d-flex justify-content-between mb-1">
-                        <small className="text-muted">MICROPHONE</small>
-                        <small style={{fontSize: '0.7rem'}}>{volumeLevel}%</small>
-                    </div>
-                    <ProgressBar 
-                        now={volumeLevel} 
-                        variant={volumeLevel > 75 ? "danger" : "primary"} 
-                        style={{ height: '6px', borderRadius: '5px', marginBottom: '0' }} 
-                    />
+                      {!isSetupPhase && (
+                        <>
+                            <DashboardMetric label="EYES" value={eyeContactStatus} />
+                            <DashboardMetric label="HEAD & FACE" value={headTiltStatus} subValue={chinStatus} />
+                            <DashboardMetric label="SHOULDERS" value={shoulderStatus} />
+                            <DashboardMetric label="POSTURE" value={centeringStatus} subValue={displayedEngagement} />
+                            <DashboardMetric label="HANDS" value={bodyStatus} />
+                        </>
+                      )}
                   </div>
                 </Card.Body>
                 )}
+
+                {/* --- תצוגת מצב עמידה (ללא שינוי) --- */}
                 {practiceMode === 'standing' && (
                     <Card.Body className="d-flex flex-column px-4 gap-2">
                          <h6 className="text-muted mb-3">STAGE ANALYSIS</h6>
