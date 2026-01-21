@@ -64,21 +64,6 @@ const StageOverlay = ({ posture, movement, hands }) => {
     );
 };
 
-// --- רכיב עזר לשורה בבר הצדדי ---
-const MetricRow = ({ label, value }) => {
-    const isPositive = value.includes("Good") || value.includes("Perfect") || value.includes("Centered") || value.includes("Straight") || value.includes("Level") || value.includes("Open") || value.includes("Smiling");
-    const isNegative = value.includes("Too") || value.includes("Don't") || value.includes("Away") || value.includes("Low") || value.includes("High") || value.includes("Uneven") || value.includes("Reading") || value.includes("Tucked");
-    
-    return (
-        <div className="d-flex justify-content-between align-items-center py-2 border-bottom" style={{ borderColor: '#eee' }}>
-            <span className="text-muted fw-bold small">{label}</span>
-            <span className={`small fw-bold ${isPositive ? 'text-success' : (isNegative ? 'text-danger' : 'text-dark')}`}>
-                {value}
-            </span>
-        </div>
-    );
-};
-
 // --- Helper Functions ---
 const calculateVariance = (arr) => {
   if (arr.length === 0) return 0;
@@ -110,13 +95,16 @@ function PracticePage() {
   const eyeStabilityRef = useRef(0);
   const centerStabilityRef = useRef(0);
   const handsStabilityRef = useRef(0);
-  const chinStabilityRef = useRef(0);      
-  const headTiltStabilityRef = useRef(0);  
-  const shoulderStabilityRef = useRef(0);  
   
-  const lastDetectedTiltRef = useRef("Straight 😐");   
-  const lastBadChinRef = useRef("Chin Level 👑"); 
-  const lastShoulderStatusRef = useRef("Posture Great ✅");
+  // טיימרים לפיצ'רים המשניים
+  const headTiltTimerRef = useRef(0);       
+  const lastDetectedTiltRef = useRef("");   
+  const cameraHeightStabilityRef = useRef(0);
+  const chinStabilityRef = useRef(0); 
+  const lastBadChinRef = useRef(""); 
+  const smileTimerRef = useRef(0);
+  const browTimerRef = useRef(0);   
+  const squintTimerRef = useRef(0); 
 
   // סטטיסטיקות לסיכום
   const sessionStatsRef = useRef({
@@ -163,7 +151,7 @@ function PracticePage() {
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false); 
   
-  // === Analysis States ===
+  // === Analysis States (לתצוגה בבר הצדדי) ===
   const [centeringStatus, setCenteringStatus] = useState("Centered ✅"); 
   const [expressionStatus, setExpressionStatus] = useState("Neutral 😐"); 
   const [browStatus, setBrowStatus] = useState("Neutral 😐"); 
@@ -314,8 +302,7 @@ function PracticePage() {
   const analyzeChinPitch = (landmarks) => {
       const noseToEyeDist = landmarks[1].y - ((landmarks[33].y + landmarks[263].y) / 2);
       if (noseToEyeDist < 0.055) return "Chin Too High (Arrogant) 🦒";
-      // נשאר 0.12 כפי שנקבע בקובץ שלך
-      if (noseToEyeDist > 0.12) return "Chin Tucked (Insecure) 🙇"; 
+      if (noseToEyeDist > 0.10) return "Chin Tucked (Insecure) 🙇";
       return "Chin Level (Authority) 👑";
   };
 
@@ -433,7 +420,7 @@ function PracticePage() {
         const faceLms = faceResult.faceLandmarks?.[0];
         const poseLms = poseResult.landmarks?.[0];
 
-        // --- מצב ישיבה: לוגיקה משולבת (יציבות + ניקוד) ---
+        // --- מצב ישיבה: לוגיקה מאוחדת וסנכרונית ---
         if (practiceMode === 'sitting') {
             
             // משתנה לציור, מתעדכן בכל פריים על בסיס ה-Ref כדי למנוע הבהוב
@@ -456,44 +443,43 @@ function PracticePage() {
                 let posRes = { centerStatus: "No Face", isCentered: false };
                 let bodyRes = { status: "No Body", isGood: false };
 
-                // 1. ניתוח קשר עין
+                // 1. ניתוח קשר עין (מנגנון איפוס)
                 if (faceResult.faceBlendshapes?.[0]) {
                     eyeRes = analyzeEyeContact(faceResult.faceBlendshapes[0].categories);
                     
                     if (!eyeRes.isGood) {
                         eyeStabilityRef.current += 1;
                     } else {
-                        // ירידה הדרגתית כדי למנוע הבהוב
                         eyeStabilityRef.current = Math.max(0, eyeStabilityRef.current - 2);
                     }
 
-                    // סף לתצוגה ויזואלית (נדבק מהר יחסית)
-                    if (eyeStabilityRef.current > 15) {
+                    if (eyeStabilityRef.current > 40) { // 2 שניות
                         setEyeContactStatus("Looking Away 🙄");
+                        
+                        // כאן השינוי הגדול: הורדה חד פעמית ואיפוס!
+                        scoreRef.current = Math.max(0, scoreRef.current - 3); // מכה כואבת
+                        sessionStatsRef.current.eyesBadFrames += 40; // מתעדים את הטעות
+                        eyeStabilityRef.current = 0; // מאפסים כדי לתת הזדמנות!
+
+                        isFramePerfect = false;
+                        
+                        // התראה תמיד תקפוץ עכשיו כי זה אירוע משמעותי
+                        alertMessage = { text: "שמור על קשר עין 👀", type: "warning" };
+                        
                     } else {
                         setEyeContactStatus(eyeRes.status === "Reading Text 📖" ? "Reading Text 📖" : "Good Contact 🤩");
                     }
-
-                    // סף לענישה והתראה
-                    if (eyeStabilityRef.current > 40) { 
-                        isFramePerfect = false;
-                        if ((eyeStabilityRef.current - 40) % 40 === 0) {
-                            scoreRef.current = Math.max(0, scoreRef.current - 3); 
-                            sessionStatsRef.current.eyesBadFrames += 40; 
-                            alertMessage = { text: "שמור על קשר עין 👀", type: "warning" };
-                        }
-                    } 
 
                     const exprRes = analyzeExpression(faceResult.faceBlendshapes[0].categories);
                     if(exprRes.smile.isSmiling) {
                          sessionStatsRef.current.smilingFrames++;
                          setExpressionStatus(exprRes.smile.status);
-                    } else setExpressionStatus("Neutral 😐");
+                    }
                     setBrowStatus(exprRes.brow);
                     setSquintStatus(exprRes.squint);
                 }
 
-                // 2. ניתוח ידיים
+                // 2. ניתוח ידיים (מנגנון איפוס)
                 if (poseLms && faceLms) {
                     bodyRes = analyzeBodyAndHands(poseLms, faceLms);
                     
@@ -503,50 +489,25 @@ function PracticePage() {
                         handsStabilityRef.current = Math.max(0, handsStabilityRef.current - 2);
                     }
 
-                    // סף ויזואלי
-                    if (handsStabilityRef.current > 15) {
+                    if (handsStabilityRef.current > 30) { // 1.5 שניות
                         setBodyStatus("Don't touch face! ✋");
+                        
+                        scoreRef.current = Math.max(0, scoreRef.current - 5); // מכה כואבת יותר
+                        sessionStatsRef.current.handsBadFrames += 30;
+                        handsStabilityRef.current = 0; // איפוס!
+
+                        isFramePerfect = false;
+                        alertMessage = { text: "הרחק ידיים מהפנים ✋", type: "danger" };
+
                     } else {
                         setBodyStatus("Hands Open 👐");
                     }
 
-                    // סף ענישה
-                    if (handsStabilityRef.current > 30) { 
-                        isFramePerfect = false;
-                        if ((handsStabilityRef.current - 30) % 30 === 0) {
-                            scoreRef.current = Math.max(0, scoreRef.current - 5); 
-                            sessionStatsRef.current.handsBadFrames += 30;
-                            alertMessage = { text: "הרחק ידיים מהפנים ✋", type: "danger" };
-                        }
-                    }
-
-                    // --- כתפיים (נוסף Alert) ---
                     const shoulderRes = analyzeShoulderStability(poseLms);
-                    if (!shoulderRes.isLevel) shoulderStabilityRef.current++;
-                    else shoulderStabilityRef.current = Math.max(0, shoulderStabilityRef.current - 2);
-                    
-                    // שלב 1: חיווי ויזואלי (45 פריימים = 1.5 שניות)
-                    if (shoulderStabilityRef.current > 45) {
-                        setShoulderStatus("Uneven Shoulders ⚖️");
-                        lastShoulderStatusRef.current = "Uneven Shoulders ⚖️";
-                    } else if (shoulderStabilityRef.current === 0) {
-                        setShoulderStatus("Posture Great ✅");
-                        lastShoulderStatusRef.current = "Posture Great ✅";
-                    } else {
-                        setShoulderStatus(lastShoulderStatusRef.current);
-                    }
-
-                    // שלב 2: התראה קופצת (60 פריימים = 2 שניות)
-                    if (shoulderStabilityRef.current > 60) {
-                        isFramePerfect = false;
-                        if ((shoulderStabilityRef.current - 60) % 90 === 0) {
-                            scoreRef.current = Math.max(0, scoreRef.current - 5);
-                            alertMessage = { text: "ישר את הכתפיים! ⚖️", type: "warning" };
-                        }
-                    }
+                    setShoulderStatus(shoulderRes.status);
                 }
 
-                // 3. ניתוח מרכוז ומיקום
+                // 3. ניתוח מרכוז (מנגנון איפוס)
                 if (faceLms) {
                     posRes = analyzeCenteringAndDistance(faceLms, poseLms);
                     
@@ -556,77 +517,24 @@ function PracticePage() {
                         centerStabilityRef.current = 0;
                     }
 
-                    // סף ויזואלי
-                    if (centerStabilityRef.current > 20) {
+                    if (centerStabilityRef.current > 40) { // 2 שניות
                         setCenteringStatus(posRes.centerStatus);
+                        
+                        scoreRef.current = Math.max(0, scoreRef.current - 4);
+                        sessionStatsRef.current.centerBadFrames += 40;
+                        centerStabilityRef.current = 0; // איפוס!
+
+                        isFramePerfect = false;
+                        alertMessage = { text: posRes.centerStatus + " 🎯", type: "warning" };
                     } else {
                         setCenteringStatus("Centered ✅");
                     }
 
-                    // סף ענישה
-                    if (centerStabilityRef.current > 40) { 
-                        isFramePerfect = false;
-                        if ((centerStabilityRef.current - 40) % 40 === 0) {
-                            scoreRef.current = Math.max(0, scoreRef.current - 4);
-                            sessionStatsRef.current.centerBadFrames += 40;
-                            alertMessage = { text: posRes.centerStatus + " 🎯", type: "warning" };
-                        }
-                    }
-
                     setDistanceStatus(posRes.distStatus);
-                    
-                    // --- ייצוב הטיית ראש (נוסף Alert) ---
                     const rawTilt = analyzeHeadTilt(faceLms);
-                    if (rawTilt.includes("Too Tilted")) headTiltStabilityRef.current++;
-                    else headTiltStabilityRef.current = Math.max(0, headTiltStabilityRef.current - 2);
-
-                    // שלב 1: חיווי ויזואלי (45 פריימים = 1.5 שניות)
-                    if (headTiltStabilityRef.current > 45) {
-                        setHeadTiltStatus(rawTilt);
-                        lastDetectedTiltRef.current = rawTilt;
-                    } else if (headTiltStabilityRef.current === 0) {
-                        setHeadTiltStatus("Straight 😐");
-                    } else {
-                        setHeadTiltStatus(lastDetectedTiltRef.current);
-                    }
-
-                    // שלב 2: התראה קופצת (60 פריימים = 2 שניות)
-                    if (headTiltStabilityRef.current > 60) {
-                        isFramePerfect = false;
-                        if ((headTiltStabilityRef.current - 60) % 90 === 0) {
-                            scoreRef.current = Math.max(0, scoreRef.current - 5);
-                            alertMessage = { text: "ישר את הראש! 😐", type: "warning" };
-                        }
-                    }
-
-                    // --- ייצוב סנטר (עם השינוי ל-2 שניות) ---
+                    if (rawTilt.includes("Too Tilted")) setHeadTiltStatus(rawTilt); else setHeadTiltStatus("Straight (Authority) 🤴");
                     const rawChin = analyzeChinPitch(faceLms);
-                    if (rawChin.includes("Too") || rawChin.includes("Tucked")) chinStabilityRef.current++;
-                    else chinStabilityRef.current = Math.max(0, chinStabilityRef.current - 2);
-
-                    // שלב 1: חיווי ויזואלי בלבד (אחרי 1.5 שניות / 45 פריימים)
-                    if (chinStabilityRef.current > 45) {
-                        setChinStatus(rawChin);
-                        lastBadChinRef.current = rawChin;
-                    } else if (chinStabilityRef.current === 0) {
-                        setChinStatus("Chin Level 👑");
-                    } else {
-                        setChinStatus(lastBadChinRef.current);
-                    }
-
-                    // שלב 2: התראה קופצת למסך (אחרי 2 שניות / 60 פריימים)
-                    if (chinStabilityRef.current > 60) {
-                         isFramePerfect = false;
-                         // התראה ראשונה ב-60, וחזרות כל 3 שניות (90 פריימים)
-                         if ((chinStabilityRef.current - 60) % 90 === 0) {
-                             scoreRef.current = Math.max(0, scoreRef.current - 5);
-                             alertMessage = { text: "הרם את הראש! 👑", type: "warning" };
-                         }
-                    }
-
-                    const rawCam = analyzeCameraHeight(faceLms);
-                    setCameraHeightStatus(rawCam);
-                    if(poseLms) setEngagementStatus(analyzeEngagement(poseLms));
+                    if(rawChin.includes("Too")) setChinStatus(rawChin); else setChinStatus("Chin Level (Authority) 👑");
                 }
 
                 // --- עדכונים כלליים ---
@@ -636,6 +544,7 @@ function PracticePage() {
 
                 if (alertMessage) {
                     setSmartFeedback(alertMessage);
+                    // כאן אין צורך בבדיקת זמן כי הטיימר עצמו הוא המחסום
                     setTimeout(() => setSmartFeedback(null), 3000);
                 }
 
@@ -645,6 +554,7 @@ function PracticePage() {
                 
                 lastProcessTimeRef.current = Date.now();
             }
+            // ציור
             if (faceLms) drawFaceBox(ctx, faceLms, isTouchingFaceForDrawing);
             if (poseLms) drawHands(ctx, poseLms, isTouchingFaceForDrawing);
         }
@@ -697,10 +607,16 @@ function PracticePage() {
     const durationSeconds = (Date.now() - startTimeRef.current) / 1000;
     const formattedDuration = `${Math.floor(durationSeconds / 60)}:${Math.floor(durationSeconds % 60) < 10 ? '0' : ''}${Math.floor(durationSeconds % 60)}`;
     
-    // חישוב המטריקות הסופיות לפי הטעויות שקרו בפועל
+    // סך כל הפריימים שנבדקו
     const total = Math.max(1, sessionStatsRef.current.totalFrames);
+
+    // --- תיקון 1: חישוב "זמן נטו" למדדים ההתנהגותיים ---
+    // הנוסחה: 100 פחות אחוז הזמן שהיית לא בסדר (בלי הכפלות ענישה!)
     const calcMetric = (badFrames) => Math.max(0, Math.round(100 - (badFrames / total * 100)));
 
+    // --- תיקון 2: חישוב ווליום חכם יותר ---
+    // אם דיברת בעוצמה טובה מעל 15% מהזמן (נניח שאר הזמן הקשבת או שתקת), זה נחשב 100
+    // זה מונע ענישה על פאוזות טבעיות
     const speechTimeRatio = sessionStatsRef.current.goodVolumeFrames / total;
     const volumeScore = Math.min(100, Math.round((speechTimeRatio / 0.15) * 100));
 
@@ -709,7 +625,7 @@ function PracticePage() {
         centering: calcMetric(sessionStatsRef.current.centerBadFrames),
         hands: calcMetric(sessionStatsRef.current.handsBadFrames),
         expression: Math.round((sessionStatsRef.current.smilingFrames / total) * 100),
-        volume: volumeScore,
+        volume: volumeScore, // הציון המתוקן
         posture: calcMetric(sessionStatsRef.current.centerBadFrames), 
         articulation: 100
     };
@@ -720,7 +636,7 @@ function PracticePage() {
         practiceMode: practiceMode || 'sitting',
         date: new Date(),
         duration: formattedDuration,
-        overallScore: liveScore, // הציון הסופי הוא מה שרואים על המסך
+        overallScore: liveScore, // שומרים על הציון החי כציון הקובע
         metrics: scores,
     };
     
@@ -830,33 +746,32 @@ function PracticePage() {
                       </div>
                   </div>
 
-                  {/* רשימת המדדים המלאה לבדיקת QA */}
-                  <div className="bg-light p-3 rounded-4 mb-2">
-                      <h6 className="text-muted fw-bold small mb-2 border-bottom pb-1">EXPRESSION & HEAD</h6>
-                      <MetricRow label="Expression" value={expressionStatus} />
-                      <MetricRow label="Brows" value={browStatus} />
-                      <MetricRow label="Squint" value={squintStatus} />
-                      <MetricRow label="Head Tilt" value={headTiltStatus} />
-                      <MetricRow label="Chin Pitch" value={chinStatus} />
+                  <div className="p-2 mb-2" style={{ borderLeft: '3px solid #6c757d', backgroundColor: '#f8f9fa' }}>
+                      <small className="text-muted d-block">ENVIRONMENT</small>
+                      <div style={{ fontSize: '0.85rem' }}>{lightingStatus}</div>
+                      <div style={{ fontSize: '0.85rem' }}>{distanceStatus}</div>
                   </div>
-
-                  <div className="bg-light p-3 rounded-4 mb-2">
-                      <h6 className="text-muted fw-bold small mb-2 border-bottom pb-1">POSTURE & BODY</h6>
-                      <MetricRow label="Eye Contact" value={eyeContactStatus} />
-                      <MetricRow label="Hands" value={bodyStatus} />
-                      <MetricRow label="Center" value={centeringStatus} />
-                      <MetricRow label="Shoulders" value={shoulderStatus} />
-                      <MetricRow label="Engagement" value={engagementStatus} />
+                  <div className="text-center p-2" style={{ backgroundColor: '#fff3cd', borderRadius: '12px' }}>
+                    <small className="text-muted d-block mb-1">EXPRESSION & HEAD</small>
+                    <div style={{ fontWeight: '700', color: expressionStatus.includes("Smiling") ? '#28a745' : '#555' }}>{expressionStatus}</div>
+                    <div style={{ fontWeight: '600', fontSize: '0.9rem', marginTop: '5px', color: '#007bff' }}>Brows: {browStatus}</div>
+                    <div style={{ fontWeight: '600', fontSize: '0.9rem', marginTop: '5px', color: chinStatus.includes("Level") ? 'green' : '#dc3545' }}>{chinStatus}</div>
                   </div>
-
-                  <div className="bg-light p-3 rounded-4 mb-2">
-                      <h6 className="text-muted fw-bold small mb-2 border-bottom pb-1">ENVIRONMENT</h6>
-                      <MetricRow label="Lighting" value={lightingStatus} />
-                      <MetricRow label="Distance" value={distanceStatus} />
-                      <MetricRow label="Cam Height" value={cameraHeightStatus} />
+                  <div className="text-center p-2" style={{ backgroundColor: '#e2e6ea', borderRadius: '12px', border: eyeContactStatus.includes("Reading") ? '2px solid #17a2b8' : 'none' }}>
+                    <small className="text-muted d-block mb-1">EYE CONTACT</small>
+                    <div style={{ fontWeight: '700', color: eyeContactStatus.includes("Good") ? '#28a745' : (eyeContactStatus.includes("Reading") ? '#17a2b8' : '#dc3545') }}>{eyeContactStatus}</div>
                   </div>
-
-                  {/* מיקרופון */}
+                  <div className="d-flex justify-content-between gap-2">
+                      <div className="text-center p-2 w-50" style={{ backgroundColor: '#f8f9fa', borderRadius: '12px' }}>
+                          <small className="text-muted d-block">POSTURE</small>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{centeringStatus}</div>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 'bold', marginTop: '5px', color: '#666' }}>{engagementStatus}</div>
+                      </div>
+                      <div className="text-center p-2 w-50" style={{ backgroundColor: '#f8f9fa', borderRadius: '12px' }}>
+                          <small className="text-muted d-block">HANDS</small>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: bodyStatus.includes("touch") ? 'red' : 'green' }}>{bodyStatus}</div>
+                      </div>
+                  </div>
                   <div className="text-center p-3 mt-auto" style={{ backgroundColor: '#f8f9fa', borderRadius: '15px' }}>
                     <div className="d-flex justify-content-between mb-1">
                         <small className="text-muted">MICROPHONE</small>
