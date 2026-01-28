@@ -8,19 +8,22 @@ function SummaryPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   
+  // Data passed from the practice session
   const { realData, videoBlob } = location.state || {};
+  
   const [localVideoUrl, setLocalVideoUrl] = useState(null);
   const [uploadStatus, setUploadStatus] = useState("idle"); 
   const hasStartedProcessing = useRef(false);
 
-  // נתונים חדשים
-  const [sessionId, setSessionId] = useState(null); // המזהה של האימון הנוכחי
-  const [isPublic, setIsPublic] = useState(false);  // האם המשתמש שיתף
-  const [topSessions, setTopSessions] = useState([]); // רשימת המצטיינים
-  const [viewingVideo, setViewingVideo] = useState(null); // איזה וידאו רואים עכשיו (מהמצטיינים)
+  // Session State
+  const [sessionId, setSessionId] = useState(null); 
+  const [isPublic, setIsPublic] = useState(false);  
+  const [topSessions, setTopSessions] = useState([]); // Hall of Fame list
+  const [viewingVideo, setViewingVideo] = useState(null); // Currently watching other user's video
 
   const [transcriptionData, setTranscriptionData] = useState(null);
 
+  // Helper: Determine pace feedback based on WPM
   const getWpmFeedback = (wpm) => {
       if (!wpm) return { text: "Analyzing...", color: "secondary" };
       const speed = parseFloat(wpm);
@@ -29,6 +32,7 @@ function SummaryPage() {
       return { text: "Perfect Pace 🎯", color: "success" };
   };
 
+  // Auth Guard
   if (!user) {
       return (
         <div className="d-flex flex-column align-items-center justify-content-center" style={{ height: '100vh', backgroundColor: '#f8f9fa', textAlign: 'center' }}>
@@ -40,6 +44,7 @@ function SummaryPage() {
       );
   }
 
+  // Default data fallback
   const sessionData = realData || {
     date: new Date(),
     speechType: "Demo Practice",
@@ -50,6 +55,7 @@ function SummaryPage() {
     metrics: { eyeContact: 0, expression: 0, centering: 0, hands: 0, volume: 0, articulation: 0, posture: 0 }
   };
 
+  // Simple feedback logic (Rule-based)
   const generateAIFeedback = (metrics) => {
     let feedback = [];
     if (metrics.eyeContact < 60) feedback.push("Try to look at the camera more often.");
@@ -61,15 +67,16 @@ function SummaryPage() {
 
   const feedbackText = generateAIFeedback(sessionData.metrics);
 
-  // 1. תצוגת וידאו והכנת נתונים
+  // 1. Video Setup & Historical Data
   useEffect(() => {
       if (videoBlob) {
           const url = URL.createObjectURL(videoBlob);
           setLocalVideoUrl(url);
       } else if (sessionData.videoUrl) {
+          // Viewing past session
           setLocalVideoUrl(sessionData.videoUrl);
           setUploadStatus("success");
-          setSessionId(sessionData._id); // אם הגענו מההיסטוריה
+          setSessionId(sessionData._id); 
           setIsPublic(sessionData.isPublic || false);
           
           if (sessionData.transcript) {
@@ -83,13 +90,12 @@ function SummaryPage() {
       }
   }, [videoBlob, sessionData]);
 
-  // 2. שליפת המצטיינים (Hall of Fame)
+  // 2. Fetch Hall of Fame (Smart Filtering)
   useEffect(() => {
       const mode = sessionData.practiceMode || 'sitting';
       const title = sessionData.speechTitle || 'Free Practice';
       
-      // === השינוי: מוסיפים את ה-ID הנוכחי להחרגה ===
-      // אם יש לנו sessionId (האימון נשמר), נשלח אותו כדי שלא יחזור ברשימה
+      // Filter out the current session ID to avoid duplicates in the list
       const excludeParam = sessionId ? `&excludeId=${sessionId}` : '';
 
       fetch(`http://localhost:5000/api/sessions/top-rated?mode=${mode}&speechTitle=${title}${excludeParam}`)
@@ -97,9 +103,9 @@ function SummaryPage() {
         .then(data => setTopSessions(data))
         .catch(err => console.error("Failed to fetch top sessions", err));
         
-  }, [sessionData, isPublic, sessionId]); // הוספנו את sessionId לתלויות
+  }, [sessionData, isPublic, sessionId]);
 
-  // 3. שמירת האימון הנוכחי לשרת
+  // 3. Process & Save Session (Parallel Execution)
   useEffect(() => {
     const processSession = async () => {
         if (!videoBlob || hasStartedProcessing.current) return;
@@ -111,7 +117,7 @@ function SummaryPage() {
             const formData = new FormData();
             formData.append("file", videoBlob);
 
-            // א. העלאה לקלאוד
+            // A. Upload Video to Cloud (Promise 1)
             const uploadPromise = (async () => {
                 const cloudData = new FormData();
                 cloudData.append("file", videoBlob);
@@ -120,12 +126,13 @@ function SummaryPage() {
                 return res.json();
             })();
 
-            // ב. תמלול בשרת
+            // B. Transcribe Audio on Server (Promise 2)
             const transcribePromise = fetch('http://localhost:5000/api/transcribe', {
                 method: 'POST',
                 body: formData
             }).then(res => res.json());
 
+            // C. Wait for BOTH parallel tasks to finish
             const [cloudResult, transcribeResult] = await Promise.all([uploadPromise, transcribePromise]);
 
             setTranscriptionData({
@@ -135,7 +142,7 @@ function SummaryPage() {
                 repetitive: transcribeResult.repetitiveWords || []
             });
 
-            // ג. שמירה לדאטה בייס
+            // D. Save Metadata to Database
             const finalSessionData = { 
                 ...sessionData, 
                 userId: user.id,
@@ -144,7 +151,7 @@ function SummaryPage() {
                 wpm: transcribeResult.wpm,
                 fillerCount: transcribeResult.fillerCount,
                 repetitiveWords: transcribeResult.repetitiveWords,
-                isPublic: false // מתחיל תמיד כפרטי
+                isPublic: false 
             };
             
             const dbRes = await fetch('http://localhost:5000/api/sessions', {
@@ -155,7 +162,7 @@ function SummaryPage() {
 
             if (dbRes.ok) {
                 const savedSession = await dbRes.json();
-                setSessionId(savedSession._id); // שומרים את ה-ID כדי שנוכל לעדכן אחר כך
+                setSessionId(savedSession._id); 
                 setUploadStatus("success");
             }
 
@@ -168,12 +175,12 @@ function SummaryPage() {
     processSession();
   }, [videoBlob, user, sessionData]);
 
-  // פונקציה לשיתוף ב"היכל התהילה"
+  // Toggle Public/Private Status (Optimistic UI)
   const togglePublic = async () => {
       if (!sessionId) return;
       
       const newValue = !isPublic;
-      setIsPublic(newValue); // עדכון אופטימי ב-UI
+      setIsPublic(newValue); // Update UI immediately
 
       try {
           await fetch(`http://localhost:5000/api/sessions/${sessionId}`, {
@@ -183,7 +190,7 @@ function SummaryPage() {
           });
       } catch (err) {
           console.error("Failed to update public status", err);
-          setIsPublic(!newValue); // ביטול אם נכשל
+          setIsPublic(!newValue); // Rollback on error
       }
   };
 
@@ -217,7 +224,7 @@ function SummaryPage() {
       <Container>
         <Row className="g-4">
             <Col lg={7}>
-                {/* --- הוידאו שלי --- */}
+                {/* --- My Video --- */}
                 <Card className="border-0 shadow-sm mb-4" style={{ borderRadius: '20px', overflow: 'hidden' }}>
                     {localVideoUrl ? (
                         <div style={{ width: '100%', height: '400px', backgroundColor: '#000' }}>
@@ -226,7 +233,7 @@ function SummaryPage() {
                     ) : ( <div className="p-5 text-center">No Video</div> )}
                 </Card>
 
-                {/* --- Hall of Fame / היכל התהילה --- */}
+                {/* --- Hall of Fame --- */}
                 {topSessions.length > 0 && (
                     <Card className="border-0 shadow-sm mb-4 bg-white" style={{ borderRadius: '20px' }}>
                         <Card.Header className="bg-transparent border-0 pt-4 px-4">
@@ -260,7 +267,7 @@ function SummaryPage() {
                     </Card>
                 )}
 
-                {/* --- תמלול --- */}
+                {/* --- Transcription --- */}
                 <Card className="border-0 shadow-sm" style={{ borderRadius: '20px' }}>
                     <Card.Body className="p-4">
                         <div className="d-flex justify-content-between align-items-center mb-3">
@@ -270,7 +277,7 @@ function SummaryPage() {
                                     <Badge bg={getWpmFeedback(transcriptionData.wpm).color}>
                                         {transcriptionData.wpm} WPM
                                     </Badge>
-                                    <Badge bg={transcriptionData.fillers > 3 ? "danger" : "success"}>
+                                    <Badge bg={transcriptionData.fillers > 1 ? "danger" : "success"}>
                                         {transcriptionData.fillers} Fillers
                                     </Badge>
                                 </div>
@@ -284,13 +291,12 @@ function SummaryPage() {
             </Col>
 
             <Col lg={5}>
-                {/* --- כרטיסיית שיתוף ו-AI Feedback --- */}
+                {/* --- AI Feedback & Share --- */}
                 <Card className="border-0 shadow-sm mb-3" style={{ borderRadius: '20px', background: 'linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%)' }}>
                     <Card.Body className="p-4">
                         <h5 style={{ fontWeight: '700', marginBottom: '15px' }}>AI Feedback</h5>
                         <p className="text-muted mb-4">{feedbackText}</p>
                         
-                        {/* שינינו את התנאי ל > 0 כדי שתוכל לראות את הכפתור תמיד */}
                         {sessionData.overallScore > 0 && sessionId && (
                             <div className="bg-white p-3 rounded shadow-sm border d-flex align-items-center justify-content-between">
                                 <div>
@@ -327,7 +333,7 @@ function SummaryPage() {
         </Row>
       </Container>
 
-      {/* --- Modal לצפייה בוידאו של אחרים --- */}
+      {/* --- Other Users' Video Modal --- */}
       <Modal show={!!viewingVideo} onHide={() => setViewingVideo(null)} size="lg" centered>
           <Modal.Header closeButton>
               <Modal.Title>{viewingVideo?.userName}'s Session</Modal.Title>

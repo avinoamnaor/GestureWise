@@ -29,37 +29,20 @@ const SkillBar = ({ label, percentage, color, icon }) => (
 const PracticeItem = ({ title, date, score, feedback, onClick }) => (
   <Card className="mb-3 border-0 shadow-sm" style={{ borderRadius: '15px', overflow: 'hidden' }}>
     <Card.Body className="d-flex flex-column flex-md-row align-items-center justify-content-between p-4">
-      
       <div className="d-flex align-items-center mb-3 mb-md-0 w-100">
-        <div className="me-3 d-flex align-items-center justify-content-center bg-light rounded-circle" style={{ width: '50px', height: '50px', fontSize: '1.5rem' }}>
-          🎤
-        </div>
+        <div className="me-3 d-flex align-items-center justify-content-center bg-light rounded-circle" style={{ width: '50px', height: '50px', fontSize: '1.5rem' }}>🎤</div>
         <div>
           <h5 style={{ fontWeight: '700', marginBottom: '4px', color: '#333' }}>{title}</h5>
-          <div className="text-muted small">
-            📅 {date} &nbsp;|&nbsp; 💬 {feedback}
-          </div>
+          <div className="text-muted small">📅 {date} &nbsp;|&nbsp; 💬 {feedback}</div>
         </div>
       </div>
-
       <div className="d-flex align-items-center gap-4 w-100 w-md-auto justify-content-between justify-content-md-end mt-3 mt-md-0">
         <div className="text-center px-3">
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: score >= 9 ? '#198754' : '#ffc107', lineHeight: 1 }}>
-            {score}
-          </div>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: score >= 90 ? '#198754' : (score >= 70 ? '#ffc107' : '#dc3545'), lineHeight: 1 }}>{score}</div>
           <small className="text-muted" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Score</small>
         </div>
-
         <div className="d-flex gap-2">
-            {/* הכפתור עם הטקסט המעודכן */}
-            <Button 
-                variant="outline-primary" 
-                className="px-4 py-2" 
-                style={{ borderRadius: '25px', fontWeight: '600' }} 
-                onClick={onClick}
-            >
-                View Analysis
-            </Button>
+            <Button variant="outline-primary" className="px-4 py-2" style={{ borderRadius: '25px', fontWeight: '600' }} onClick={onClick}>View Analysis</Button>
         </div>
       </div>
     </Card.Body>
@@ -73,7 +56,14 @@ function ProfilePage() {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  const [stats, setStats] = useState({ totalSpeeches: 0, avgScore: 0, streak: 0 });
+  // State לנתוני המשתמש המעודכנים (גיימיפיקציה)
+  const [userData, setUserData] = useState({ 
+      rank: "Novice Speaker", 
+      streak: 0, 
+      xp: 0 
+  });
+
+  const [stats, setStats] = useState({ totalSpeeches: 0, avgScore: 0 });
   const [skills, setSkills] = useState({ eyeContact: 0, hands: 0, posture: 0, volume: 0 });
   const [smartTip, setSmartTip] = useState("Start practicing to get personalized tips!");
 
@@ -83,56 +73,93 @@ function ProfilePage() {
       return;
     }
 
-    fetch(`http://localhost:5000/api/sessions?userId=${user.id}`)
-      .then(res => res.json())
-      .then(data => {
-        setSessions(data);
-        
-        if (data.length > 0) {
-          const totalScore = data.reduce((sum, session) => sum + (session.overallScore || 0), 0);
-          const average = (totalScore / data.length).toFixed(1);
-          setStats({ totalSpeeches: data.length, avgScore: average, streak: 3 });
+    const fetchData = async () => {
+        try {
+            // 1. שליפת אימונים
+            const sessionsRes = await fetch(`http://localhost:5000/api/sessions?userId=${user.id}`);
+            const sessionsData = await sessionsRes.json();
+            setSessions(sessionsData.reverse()); // הכי חדש למעלה
 
-          let sumEye = 0, sumHands = 0, sumPosture = 0, sumVolume = 0;
-          data.forEach(session => {
-            const m = session.metrics || {};
-            sumEye += m.eyeContact || 0;
-            sumHands += m.hands || 0;
-            sumPosture += m.posture || 0;
-            sumVolume += m.volume || 0;
-          });
+            // 2. ניסיון לשליפת נתוני משתמש עדכניים (עבור ה-Streak וה-Rank)
+            // הערה: נתיב זה צריך להיות קיים בשרת שלך (GET /api/users/:id)
+            // אם הוא לא קיים, הוא ישתמש בנתונים הקיימים ב-user מקונטקסט
+            try {
+                const userRes = await fetch(`http://localhost:5000/api/users/${user.id}`);
+                if (userRes.ok) {
+                    const updatedUser = await userRes.json();
+                    setUserData({
+                        rank: updatedUser.rank || "Novice Speaker",
+                        streak: updatedUser.currentStreak || 0,
+                        xp: updatedUser.xp || 0
+                    });
+                } else {
+                    // Fallback
+                    setUserData({
+                        rank: user.rank || "Novice Speaker",
+                        streak: user.currentStreak || 0,
+                        xp: user.xp || 0
+                    });
+                }
+            } catch (e) {
+                 setUserData({
+                    rank: user.rank || "Novice Speaker",
+                    streak: user.currentStreak || 0,
+                    xp: user.xp || 0
+                });
+            }
 
-          const avgSkills = {
-            eyeContact: Math.round(sumEye / data.length),
-            hands: Math.round(sumHands / data.length),
-            posture: Math.round(sumPosture / data.length),
-            volume: Math.round(sumVolume / data.length)
-          };
-          setSkills(avgSkills);
+            // חישוב סטטיסטיקות
+            if (sessionsData.length > 0) {
+                const totalScore = sessionsData.reduce((sum, session) => sum + (session.overallScore || 0), 0);
+                const average = (totalScore / sessionsData.length).toFixed(1);
+                setStats({ totalSpeeches: sessionsData.length, avgScore: average });
 
-          const lowestSkill = Object.keys(avgSkills).reduce((a, b) => avgSkills[a] < avgSkills[b] ? a : b);
-          switch (lowestSkill) {
-            case 'eyeContact': setSmartTip("Focus on maintaining Eye Contact."); break;
-            case 'hands': setSmartTip("Try using more Hand Gestures."); break;
-            case 'posture': setSmartTip("Check your Posture."); break;
-            case 'volume': setSmartTip("Speak up! Work on your Volume."); break;
-            default: setSmartTip("Great job! Keep practicing.");
-          }
-        } else {
-            setStats({ totalSpeeches: 0, avgScore: 0, streak: 0 });
-            setSkills({ eyeContact: 0, hands: 0, posture: 0, volume: 0 });
+                let sumEye = 0, sumHands = 0, sumPosture = 0, sumVolume = 0;
+                sessionsData.forEach(session => {
+                    const m = session.metrics || {};
+                    sumEye += m.eyeContact || 0;
+                    sumHands += m.hands || 0;
+                    sumPosture += m.posture || 0;
+                    sumVolume += m.volume || 0;
+                });
+
+                const avgSkills = {
+                    eyeContact: Math.round(sumEye / sessionsData.length),
+                    hands: Math.round(sumHands / sessionsData.length),
+                    posture: Math.round(sumPosture / sessionsData.length),
+                    volume: Math.round(sumVolume / sessionsData.length)
+                };
+                setSkills(avgSkills);
+
+                const lowestSkill = Object.keys(avgSkills).reduce((a, b) => avgSkills[a] < avgSkills[b] ? a : b);
+                switch (lowestSkill) {
+                    case 'eyeContact': setSmartTip("Focus on maintaining Eye Contact."); break;
+                    case 'hands': setSmartTip("Try using more Hand Gestures."); break;
+                    case 'posture': setSmartTip("Check your Posture."); break;
+                    case 'volume': setSmartTip("Speak up! Work on your Volume."); break;
+                    default: setSmartTip("Great job! Keep practicing.");
+                }
+            }
+        } catch (err) {
+            console.error("Error fetching data:", err);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Error fetching sessions:", err);
-        setLoading(false);
-      });
+    };
+
+    fetchData();
   }, [user]);
 
   const handleAnalysisClick = (session) => {
-    // מעבירים את כל הנתונים, כולל הוידאו, לדף הסיכום
     navigate('/summary', { state: { realData: session } });
+  };
+
+  // צבע תג הדרגה
+  const getRankColor = (rank) => {
+      if (rank?.includes("Master")) return "warning"; // זהב
+      if (rank?.includes("Professional")) return "info"; // כחול
+      if (rank?.includes("Intermediate")) return "secondary"; // אפור
+      return "light"; 
   };
 
   if (loading) return <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}><Spinner animation="border" variant="primary" /></div>;
@@ -165,10 +192,21 @@ function ProfilePage() {
               </div>
               <div>
                 <h1 style={{ fontWeight: '800', color: '#2c3e50', fontSize: '2.5rem' }}>{user.name}</h1>
-                <div className="d-flex align-items-center gap-3 mt-2">
-                  <Badge bg="secondary" className="px-3 py-2">Intermediate Speaker</Badge>
-                  <Badge bg="success" pill className="px-3 py-2">🔥 {stats.streak} Day Streak</Badge>
+                
+                {/* --- אזור הגיימיפיקציה --- */}
+                <div className="d-flex align-items-center gap-3 mt-2 flex-wrap">
+                  <Badge bg={getRankColor(userData.rank)} text={userData.rank?.includes("Master") ? "dark" : "dark"} className="px-3 py-2 border shadow-sm">
+                      {userData.rank}
+                  </Badge>
+                  
+                  <Badge bg={userData.streak > 0 ? "success" : "secondary"} pill className="px-3 py-2 shadow-sm">
+                      🔥 {userData.streak} Day Streak
+                  </Badge>
+                  
+                  <small className="text-muted fw-bold">⭐ {userData.xp} XP</small>
                 </div>
+                {/* ------------------------- */}
+
               </div>
             </Col>
             <Col md={5}>
@@ -194,7 +232,7 @@ function ProfilePage() {
                 sessions.map((session) => (
                   <PracticeItem 
                     key={session._id} 
-                    title={session.speechType || "Free Practice"} 
+                    title={session.speechTitle || session.speechType || "Free Practice"} 
                     date={new Date(session.date).toLocaleDateString()} 
                     score={session.overallScore} 
                     feedback={`Duration: ${session.duration}`} 

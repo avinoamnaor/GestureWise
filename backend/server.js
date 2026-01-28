@@ -4,11 +4,11 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const multer = require('multer');
-const { createClient } = require('@deepgram/sdk');
-const fs = require('fs');
 
-// ייבוא המודלים
+// --- Import New Modular Routes ---
+const transcribeRoutes = require('./routes/transcribeRoutes');
+
+// --- Import Models ---
 const Session = require('./models/Session');
 const User = require('./models/User');
 const Speech = require('./models/Speech');
@@ -17,25 +17,18 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// הגדרת המפתח של Deepgram
-const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
-const deepgram = createClient(deepgramApiKey);
-
-const upload = multer({ dest: 'uploads/' });
-
 app.use(cors());
 app.use(express.json());
 
-// חיבור ל-MongoDB
+// --- DATABASE CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ Connected to MongoDB Atlas!'))
   .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
+//  AI Transcribe Route  
+app.use('/api/transcribe', transcribeRoutes);
 
-// ===========================
-// 1. משתמשים (Auth)
-// ===========================
-
+// 1. Auth Routes
 app.post('/api/register', async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
@@ -68,17 +61,51 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-
-// ===========================
-// 2. אימונים (Sessions) - יצירה, שליפה, מחיקה ועדכון
-// ===========================
-
-// שמירת אימון חדש
+// 2. Session Routes
 app.post('/api/sessions', async (req, res) => {
   try {
-    const newSession = new Session(req.body);
+    const { userId, overallScore, ...sessionData } = req.body;
+    const newSession = new Session({ userId, overallScore, ...sessionData });
     const savedSession = await newSession.save();
     console.log("💾 Session Saved:", savedSession._id);
+
+    // Gamification Logic
+    if (userId && userId !== 'Guest') {
+      const user = await User.findById(userId);
+      if (user) {
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); 
+        
+        let lastDate = null;
+        if (user.lastPracticeDate) {
+            const d = new Date(user.lastPracticeDate);
+            lastDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        }
+
+        if (!lastDate) {
+            user.currentStreak = 1;
+        } else {
+            const diffTime = Math.abs(today - lastDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            if (diffDays === 1) {
+                user.currentStreak += 1;
+            } else if (diffDays > 1) {
+                user.currentStreak = 1;
+            }
+        }
+        
+        user.lastPracticeDate = now;
+        const xpEarned = 50 + Math.round((overallScore || 0) / 2);
+        user.xp = (user.xp || 0) + xpEarned;
+
+        if (user.xp < 500) user.rank = "Novice Speaker";
+        else if (user.xp < 2000) user.rank = "Intermediate Speaker";
+        else if (user.xp < 5000) user.rank = "Professional Speaker";
+        else user.rank = "Public Speaking Master";
+
+        await user.save();
+      }
+    }
     res.status(201).json(savedSession);
   } catch (err) {
     console.error("Error saving session:", err);
@@ -86,32 +113,23 @@ app.post('/api/sessions', async (req, res) => {
   }
 });
 
-// שליפת "היכל התהילה" (המצטיינים) - חייב להופיע לפני השליפה הכללית
 app.get('/api/sessions/top-rated', async (req, res) => {
   try {
-    // הוספנו את excludeId לרשימת הפרמטרים
     const { mode, speechTitle, excludeId } = req.query;
-
     const query = {
       isPublic: true,            
       practiceMode: mode,        
-      overallScore: { $gt: 40 } 
+      overallScore: { $gt: 80 } 
     };
 
     if (speechTitle && speechTitle !== "Free Practice") {
        query.speechTitle = speechTitle;
     }
-
-    // === השינוי: אם התקבל ID להחרגה, לא מחזירים אותו ===
     if (excludeId) {
-        query._id = { $ne: excludeId }; // $ne = Not Equal
+        query._id = { $ne: excludeId };
     }
-    // =================================================
 
-    const topSessions = await Session.find(query)
-      .sort({ overallScore: -1 }) 
-      .limit(3); 
-
+    const topSessions = await Session.find(query).sort({ overallScore: -1 }).limit(3); 
     const resultsWithNames = await Promise.all(topSessions.map(async (session) => {
         let userName = "Anonymous Speaker";
         if (session.userId) {
@@ -122,22 +140,14 @@ app.get('/api/sessions/top-rated', async (req, res) => {
                 console.log("Error finding user name", e);
             }
         }
-        
-        return {
-            ...session.toObject(),
-            userName
-        };
+        return { ...session.toObject(), userName };
     }));
-
     res.json(resultsWithNames);
-
   } catch (err) {
-    console.error("Error fetching top sessions:", err);
     res.status(500).json({ error: "Failed to fetch top sessions" });
   }
 });
 
-// שליפת כל האימונים (למשתמש ספציפי)
 app.get('/api/sessions', async (req, res) => {
   try {
     const { userId } = req.query;
@@ -149,51 +159,45 @@ app.get('/api/sessions', async (req, res) => {
   }
 });
 
-// עדכון אימון (למשל: שינוי ל-Public) - הראוט החדש!
 app.patch('/api/sessions/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const updates = req.body; // למשל { isPublic: true }
-        
+        const updates = req.body;
         const result = await Session.findByIdAndUpdate(id, updates, { new: true });
-        
-        if (!result) {
-            return res.status(404).json({ error: "Session not found" });
-        }
-        
-        console.log(`📝 Session ${id} updated:`, updates);
+        if (!result) return res.status(404).json({ error: "Session not found" });
         res.json(result);
     } catch (error) {
-        console.error("Error updating session:", error);
         res.status(500).json({ error: "Failed to update session" });
     }
 });
 
-// מחיקת אימון
 app.delete('/api/sessions/:id', async (req, res) => {
     try {
         const { id } = req.params;
         await Session.findByIdAndDelete(id);
-        console.log("🗑️ Session deleted from DB:", id);
         res.json({ message: "Session deleted from DB" });
     } catch (error) {
         res.status(500).json({ error: "Failed to delete" });
     }
 });
 
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('-password');
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
-// ===========================
-// 3. נאומים (Speeches)
-// ===========================
-
+// 3. Speech Routes
 app.post('/api/speeches', async (req, res) => {
   try {
     const newSpeech = new Speech(req.body);
     const savedSpeech = await newSpeech.save();
-    console.log("📝 Speech Saved:", savedSpeech.title, "| Public:", savedSpeech.isPublic);
     res.status(201).json(savedSpeech);
   } catch (err) {
-    console.error("Error saving speech:", err);
     res.status(500).json({ error: "Failed to save speech" });
   }
 });
@@ -203,154 +207,13 @@ app.get('/api/speeches', async (req, res) => {
     const { userId } = req.query;
     let query = { isPublic: true }; 
     if (userId) {
-        query = {
-            $or: [
-                { isPublic: true },
-                { userId: userId }
-            ]
-        };
+        query = { $or: [ { isPublic: true }, { userId: userId } ] };
     }
-
     const speeches = await Speech.find(query).sort({ date: -1 });
     res.json(speeches);
   } catch (err) {
-    console.error("Error fetching speeches:", err);
     res.status(500).json({ error: "Failed to fetch speeches" });
   }
-});
-
-
-// ===========================
-// 4. ניתוח דיבור (STT) - הגרסה האגרסיבית והמלאה
-// ===========================
-
-app.post('/api/transcribe', upload.single('file'), async (req, res) => {
-    try {
-        if (!req.file) {
-             return res.status(400).json({ error: "No audio file provided" });
-        }
-
-        console.log(`🎤 Analyzing audio file: ${req.file.path}`);
-
-        const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
-            fs.createReadStream(req.file.path),
-            {
-                model: "nova-2",       
-                smart_format: false,   // משאיר את הגמגומים בטקסט
-                punctuate: true,       
-                filler_words: true,    
-                language: "en",
-            }
-        );
-
-        if (error) throw error;
-
-        // מחיקת הקובץ הזמני
-        fs.unlinkSync(req.file.path);
-
-        const transcript = result.results.channels[0].alternatives[0].transcript;
-        const words = result.results.channels[0].alternatives[0].words;
-        const durationMin = result.metadata.duration / 60;
-        const wpm = words.length / durationMin;
-        const totalWordCount = words.length;
-
-        console.log("Raw words found:", words.map(w => w.word).join(" "));
-
-        // === אלגוריתם ספירה אגרסיבי ===
-        let fillersCount = 0;
-        
-        // רשימה מורחבת של חשודים
-        const suspiciousList = [
-            "um", "umm", "uh", "uhh", "ah", "ahh", "er", "err", "eh", "ehh", 
-            "hm", "hmm", "mhm", "mm", "huh", "erm", "ahem", "sooo", "aa", "ee", 
-            "am", "im", "an"
-        ];
-
-        // Regex שתופס מילים כמו "aaaaa" או "mmmmm"
-        const vocalizationRegex = /^(.)\1{2,}$/; 
-
-        for (let i = 0; i < words.length; i++) {
-            const w = words[i];
-            const cleanWord = w.word.toLowerCase().replace(/[^a-z]/g, ''); 
-            
-            // 1. זיהוי מובנה של Deepgram
-            if (w.filled_pause === true) { 
-                fillersCount++; 
-                continue; 
-            }
-
-            // 2. זיהוי לפי רשימה שלנו
-            if (suspiciousList.includes(cleanWord)) { 
-                fillersCount++; 
-                continue; 
-            }
-
-            // 3. זיהוי מריחות קול (Regex חדש!)
-            if (vocalizationRegex.test(cleanWord)) { 
-                console.log(`Found vocalization filler: "${cleanWord}"`);
-                fillersCount++; 
-                continue; 
-            }
-            
-            // 4. זיהוי חזרות (Stuttering)
-            if (i > 0) {
-                const prevWord = words[i-1].word.toLowerCase().replace(/[^a-z]/g, '');
-                if (cleanWord === prevWord) { 
-                    console.log(`Found repetition filler: "${prevWord}" -> "${cleanWord}"`);
-                    fillersCount++;
-                }
-            }
-        }
-
-        // === אלגוריתם זיהוי מילים נתקעות (לפי אחוזים) ===
-        const stopWords = new Set([
-            "a", "an", "the", "and", "but", "or", "if", "of", "to", "in", "on", "that", "it", 
-            "is", "was", "for", "with", "as", "at", "be", "this", "have", "from", "one", "had", 
-            "by", "not", "all", "we", "when", "your", "can", "said", "there", "use", "each", 
-            "which", "she", "do", "how", "their", "will", "up", "other", "about", "out", "many", 
-            "then", "them", "these", "so", "some", "her", "would", "make", "like", "him", "into", 
-            "time", "has", "look", "two", "more", "write", "go", "see", "number", "no", "way", 
-            "could", "people", "my", "than", "first", "been", "call", "who", "its", "now", "find", 
-            "i", "you", "he", "me", "us", "they", "just", "very", "are"
-        ]);
-
-        const wordCounts = {};
-        words.forEach(w => {
-            const clean = w.word.toLowerCase().replace(/[^a-z]/g, '');
-            // סופרים מילה רק אם היא לא מילת קישור ולא פילר
-            if (clean.length > 1 && !stopWords.has(clean) && !suspiciousList.includes(clean)) {
-                wordCounts[clean] = (wordCounts[clean] || 0) + 1;
-            }
-        });
-
-        // תנאי סף: לפחות 2% מהנאום וגם לפחות 3 פעמים
-        const minPercentage = 0.02; 
-        const minAbsolute = 3;      
-
-        const topRepetitive = Object.entries(wordCounts)
-            .filter(([word, count]) => {
-                const percentage = count / totalWordCount;
-                return count >= minAbsolute && percentage >= minPercentage;
-            })
-            .sort((a, b) => b[1] - a[1]) // מיון מהגדול לקטן
-            .slice(0, 5) // 5 המובילים
-            .map(([word, count]) => ({ word, count }));
-
-        console.log("✅ Transcription done! WPM:", wpm.toFixed(0), "Fillers Found:", fillersCount, "Top Words:", topRepetitive);
-
-        res.json({
-            transcript: transcript,
-            wpm: wpm.toFixed(0),
-            fillerCount: fillersCount,
-            repetitiveWords: topRepetitive,
-            words: words 
-        });
-
-    } catch (err) {
-        console.error("❌ Transcription Error:", err);
-        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); 
-        res.status(500).json({ error: "Transcription failed", details: err.message });
-    }
 });
 
 app.listen(PORT, () => {
