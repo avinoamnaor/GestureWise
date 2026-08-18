@@ -63,6 +63,73 @@ final-project/
     └── server.js
 ```
 
+# Running Locally Section
+
+## Running Locally
+
+### Prerequisites
+
+* Node.js
+* npm
+* MongoDB Atlas account
+* Deepgram API key
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/avinoamnaor/GestureWise.git
+cd GestureWise
+```
+
+### 2. Configure the backend
+
+Navigate to the backend directory:
+
+```bash
+cd backend
+npm install
+```
+
+Create a `.env` file based on `.env.example`:
+
+```env
+PORT=5000
+MONGO_URI=your_mongodb_connection_string
+JWT_SECRET=your_jwt_secret
+DEEPGRAM_API_KEY=your_deepgram_api_key
+```
+
+Start the backend:
+
+```bash
+node server.js
+```
+
+The backend will run on:
+
+```text
+http://localhost:5000
+```
+
+### 3. Run the frontend
+
+Open another terminal and navigate to the frontend directory:
+
+```bash
+cd my-app
+npm install
+npm run dev
+```
+
+Vite will provide a local development URL, typically:
+
+```text
+http://localhost:5173
+```
+
+Open the URL in your browser to use GestureWise.
+
+
 ## How It Works
 
 The React frontend captures webcam input and uses MediaPipe Tasks Vision to analyze the speaker's body language during a practice session.
