@@ -73,4 +73,18 @@ After completing a presentation, users can review their recorded session and rec
 
 ## Screenshots
 
-Application screenshots will be added here.
+### Home Page
+
+![GestureWise Home Page](screenshots/gesturewise-home.png)
+
+### Live Practice
+
+Real-time presentation analysis with feedback on eye contact, posture, shoulder alignment, and hand gestures.
+
+![GestureWise Live Practice](screenshots/gesturewise-live-practice.png)
+
+### Session Report
+
+Post-session performance report with visual metrics, feedback, transcription, and session results.
+
+![GestureWise Session Report](screenshots/gesturewise-session-report.png)
